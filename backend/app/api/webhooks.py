@@ -9,12 +9,15 @@ from app.schemas.amocrm import parse_amocrm_webhook
 from app.services import telegram
 from app.services.repository import upsert_incoming
 from app.tasks.pipeline import (
+    apply_ai_edited_reply,
     apply_edited_reply,
     approve_request,
+    pop_ai_edit_session,
     pop_edit_session,
     process_lead_buffer,
     reject_request,
     save_request,
+    set_ai_edit_session,
     set_edit_session,
 )
 
@@ -22,7 +25,16 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
 @router.post("/amocrm")
-async def amocrm_webhook(request: Request, db: Session = Depends(get_db)) -> dict:
+@router.post("/amocrm/{secret}")
+async def amocrm_webhook(
+    request: Request,
+    secret: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    if settings.amocrm_webhook_secret:
+        header_secret = request.headers.get("x-webhook-secret", "")
+        if secret != settings.amocrm_webhook_secret and header_secret != settings.amocrm_webhook_secret:
+            raise HTTPException(status_code=401, detail="invalid amocrm webhook secret")
     form = await request.form()
     body = dict(form)
     if not body:
@@ -74,7 +86,12 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
         if action == "edit":
             set_edit_session(db, manager_id, approval_id)
             telegram.answer_callback(callback_id)
-            telegram.send_text(manager_id, "Отправьте новый текст ответа.")
+            telegram.send_text(manager_id, "✏️ Отправьте новый текст ответа.")
+            return {"ok": True, "action": action}
+        if action == "ai_edit":
+            set_ai_edit_session(db, manager_id, approval_id)
+            telegram.answer_callback(callback_id)
+            telegram.send_text(manager_id, "🤖 Напишите промпт — как изменить ответ?\n\nНапример: «сделай короче», «добавь про акцию», «переведи на кыргызский»")
             return {"ok": True, "action": action}
         if action == "memory":
             telegram.answer_callback(callback_id)
@@ -112,12 +129,21 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
                 )
             telegram.send_text(manager_id, "\n\n".join(lines))
             return {"ok": True, "action": "no_sorted"}
-        approval_id = pop_edit_session(db, manager_id)
-        if approval_id and text:
-            approval = apply_edited_reply(db, approval_id, manager_id, text)
+        # Ручное редактирование
+        edit_approval_id = pop_edit_session(db, manager_id)
+        if edit_approval_id and text:
+            approval = apply_edited_reply(db, edit_approval_id, manager_id, text)
             lead = db.get(Lead, approval.lead_id) if approval else None
             if approval and lead:
                 telegram.edit_approval_card(approval, lead)
-                telegram.send_text(manager_id, "Обновила карточку. Отправить этот вариант?")
-                return {"ok": True, "action": "edited"}
+            return {"ok": True, "action": "edited"}
+
+        # AI-редактор
+        ai_edit_approval_id = pop_ai_edit_session(db, manager_id)
+        if ai_edit_approval_id and text:
+            approval = apply_ai_edited_reply(db, ai_edit_approval_id, manager_id, text)
+            lead = db.get(Lead, approval.lead_id) if approval else None
+            if approval and lead:
+                telegram.edit_approval_card(approval, lead)
+            return {"ok": True, "action": "ai_edited"}
     return {"ok": True}

@@ -77,14 +77,17 @@ def approval_keyboard(approval_id: int, lead: Lead) -> dict:
         "inline_keyboard": [
             [
                 {"text": "✅ Принять", "callback_data": f"approve:{approval_id}"},
-                {"text": "✏️ Изменить", "callback_data": f"edit:{approval_id}"},
                 {"text": "❌ Отклонить", "callback_data": f"reject:{approval_id}"},
             ],
             [
-                {"text": "💾 Сохранить", "callback_data": f"save:{approval_id}"},
+                {"text": "✏️ Изменить вручную", "callback_data": f"edit:{approval_id}"},
+                {"text": "🤖 AI-редактор", "callback_data": f"ai_edit:{approval_id}"},
             ],
             [
+                {"text": "💾 Сохранить", "callback_data": f"save:{approval_id}"},
                 {"text": "🧠 Память", "callback_data": f"memory:{approval_id}"},
+            ],
+            [
                 {"text": "📋 Открыть лид", "url": lead_url(lead)},
             ],
         ]

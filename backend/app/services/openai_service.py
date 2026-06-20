@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
-from app.services.prompts import EXTRACTOR_SYSTEM_PROMPT, SALES_AGENT_SYSTEM_PROMPT
+from app.services.prompts import EXTRACTOR_SYSTEM_PROMPT, SALES_AGENT_SYSTEM_PROMPT, SALES_INTENT_SYSTEM_PROMPT
 
 
 class AIResult(BaseModel):
@@ -90,6 +90,39 @@ def generate_reply(dialogue: list[dict], slot_context: dict) -> AIResult:
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+def classify_sales_intent(dialogue: list[dict], latest_message: str) -> AIResult:
+    fallback = {"is_sales": True, "reason": "openai_api_key_missing"}
+    if not settings.openai_api_key:
+        return AIResult(content=fallback, model=settings.openai_extractor_model, purpose="sales_intent")
+    started = perf_counter()
+    response = _client().chat.completions.create(
+        model=settings.openai_extractor_model,
+        temperature=0,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": SALES_INTENT_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {"dialogue": dialogue[-20:], "latest_message": latest_message},
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+    )
+    latency_ms = int((perf_counter() - started) * 1000)
+    content = fallback | json.loads(response.choices[0].message.content or "{}")
+    content["is_sales"] = bool(content.get("is_sales"))
+    return _result(
+        content=content,
+        model=settings.openai_extractor_model,
+        purpose="sales_intent",
+        usage=_usage_payload(response),
+        latency_ms=latency_ms,
+    )
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def extract_fields(dialogue: list[dict], contacts: str | None) -> AIResult:
     empty = {
         "skin_problem": [],
@@ -119,6 +152,40 @@ def extract_fields(dialogue: list[dict], contacts: str | None) -> AIResult:
         content=empty | json.loads(response.choices[0].message.content or "{}"),
         model=settings.openai_extractor_model,
         purpose="lead_extractor",
+        usage=_usage_payload(response),
+        latency_ms=latency_ms,
+    )
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+def ai_edit_reply(original_reply: str, client_message: str, edit_prompt: str) -> AIResult:
+    if not settings.openai_api_key:
+        return AIResult(content=original_reply, model=settings.openai_model, purpose="ai_edit")
+    started = perf_counter()
+    system = (
+        "Ты редактируешь готовый ответ менеджера по продажам. "
+        "Получаешь оригинальный ответ и инструкцию по его изменению. "
+        "Верни ТОЛЬКО исправленный текст ответа — без комментариев, без кавычек, без пояснений. "
+        "Сохраняй стиль и тон оригинала. Отвечай на том же языке что и оригинал."
+    )
+    user = (
+        f"Сообщение клиента:\n{client_message}\n\n"
+        f"Оригинальный ответ:\n{original_reply}\n\n"
+        f"Инструкция по изменению:\n{edit_prompt}"
+    )
+    response = _client().chat.completions.create(
+        model=settings.openai_model,
+        temperature=0.4,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    )
+    latency_ms = int((perf_counter() - started) * 1000)
+    return _result(
+        content=(response.choices[0].message.content or "").strip(),
+        model=settings.openai_model,
+        purpose="ai_edit",
         usage=_usage_payload(response),
         latency_ms=latency_ms,
     )
