@@ -64,6 +64,44 @@ DATABASE_URL=postgresql+psycopg://postgres.YOUR_REF:PASSWORD@aws-0-region.pooler
 
 Для Celery все равно нужен Redis. Его можно оставить на сервере в Docker или взять managed Redis.
 
+## Railway backend deploy
+
+Railway должен деплоить backend, не frontend. В репозитории есть root `Dockerfile` и `railway.json`, поэтому для web-сервиса можно оставить Root Directory `/`.
+
+Web service:
+
+```text
+Root Directory: /
+Config file: /railway.json
+Healthcheck path: /health
+```
+
+Worker service нужно создать отдельным Railway service из того же GitHub repo:
+
+```text
+Root Directory: /
+Config file: /backend/railway.worker.json
+```
+
+Worker не должен быть exposed/public. Он только слушает Redis queue.
+
+Обязательные Railway variables для web и worker:
+
+```env
+DATABASE_URL=
+REDIS_URL=
+OPENAI_API_KEY=
+AMOCRM_BASE_URL=https://demicosmetics1.amocrm.ru
+AMOCRM_ACCESS_TOKEN=
+AMOJO_BASE_URL=https://amojo.amocrm.ru
+ADMIN_API_KEY=
+HUMAN_APPROVAL_ENABLED=true
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_MANAGER_CHAT_ID=
+TELEGRAM_WEBHOOK_SECRET=
+PUBLIC_BACKEND_URL=https://your-railway-domain.up.railway.app
+```
+
 ## Обязательные env
 
 ```env
