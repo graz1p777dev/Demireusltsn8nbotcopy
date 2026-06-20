@@ -139,7 +139,7 @@ def send_chat_message(session: dict, chat_id: str, lead_id: str, contact_id: str
         "silent": "false",
         "priority": "low",
         "crm_entity[id]": lead_id,
-        "crm_entity[type]": "lead",
+        "crm_entity[type]": "2",
         "persona_name": "Айым",
         "text": text,
         "crm_contact_id": contact_id or "",
