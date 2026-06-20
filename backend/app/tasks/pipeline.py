@@ -17,7 +17,7 @@ from app.models.entities import (
     TrainingExample,
 )
 from app.services import amocrm, google_sheets, telegram
-from app.services.openai_service import AIResult, extract_fields, generate_reply
+from app.services.openai_service import AIResult, ai_edit_reply, classify_sales_intent, extract_fields, generate_reply
 from app.services.slots import check_consultation_slots
 from app.tasks.celery_app import celery_app
 
@@ -82,6 +82,48 @@ def move_lead_status(db, lead: Lead, status_id: int | None, reason: str) -> None
         )
 
 
+def _lead_stage_snapshot(db, lead: Lead) -> dict:
+    if not settings.amocrm_access_token:
+        return {}
+    try:
+        stage = amocrm.lead_stage_snapshot(lead.amocrm_lead_id)
+        if stage.get("status_id"):
+            lead.status_id = stage["status_id"]
+            db.commit()
+        return stage
+    except Exception as exc:
+        log_action(db, lead.id, "amocrm.get_lead_stage", "error", error=exc)
+        return {}
+
+
+def _mark_buffers_processed(db, buffers: list[MessageBuffer]) -> None:
+    for item in buffers:
+        item.processed = True
+    db.commit()
+
+
+def _has_card_data(extracted: dict) -> bool:
+    if extracted.get("skin_problem"):
+        return True
+    return any(
+        extracted.get(key)
+        for key in ("consultation_format", "city", "experience", "name", "contacts")
+    )
+
+
+def apply_sales_stage_from_extracted(db, lead: Lead, extracted: dict) -> None:
+    if extracted.get("consultation_confirmed") and extracted.get("consultation_date") and extracted.get("consultation_time"):
+        move_lead_status(
+            db,
+            lead,
+            settings.amocrm_status_consultation_scheduled,
+            "consultation_confirmed",
+        )
+        return
+    if _has_card_data(extracted):
+        move_lead_status(db, lead, settings.amocrm_status_qualified, "lead_card_filled")
+
+
 @celery_app.task(name="process_lead_buffer", autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
 def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
     db = SessionLocal()
@@ -115,8 +157,6 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
 
         combined_text = " ".join(item.text for item in buffers if item.text).strip()
         conversation_id = buffers[-1].conversation_id
-        for item in buffers:
-            item.processed = True
 
         messages = db.scalars(
             select(Message)
@@ -127,6 +167,46 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         dialogue = [{"role": msg.role, "content": msg.text} for msg in messages if msg.text]
         if combined_text and (not dialogue or dialogue[-1]["content"] != combined_text):
             dialogue.append({"role": "user", "content": combined_text})
+
+        stage = _lead_stage_snapshot(db, lead)
+        if (
+            settings.amocrm_status_consultation_scheduled
+            and stage.get("status_id") == settings.amocrm_status_consultation_scheduled
+        ):
+            _mark_buffers_processed(db, buffers)
+            log_action(
+                db,
+                lead.id,
+                "pipeline.skip_scheduled_consultation",
+                "skipped",
+                {"status_id": stage.get("status_id"), "stage_name": stage.get("stage_name")},
+            )
+            return
+
+        intent_result = classify_sales_intent(dialogue, combined_text)
+        intent = dict(intent_result.content)
+        save_ai_usage(db, lead.id, intent_result)
+        log_action(
+            db,
+            lead.id,
+            "openai.sales_intent",
+            "success",
+            request={"latest_message": combined_text},
+            response={"intent": intent, "usage": intent_result.model_dump(exclude={"content"})},
+        )
+        if not intent.get("is_sales", True):
+            move_lead_status(db, lead, settings.amocrm_status_unsorted, "non_sales_message")
+            _mark_buffers_processed(db, buffers)
+            log_action(
+                db,
+                lead.id,
+                "pipeline.non_sales_routed",
+                "skipped",
+                {"reason": intent.get("reason"), "message": combined_text},
+            )
+            return
+
+        move_lead_status(db, lead, settings.amocrm_status_primary_contact, "sales_message")
 
         slot_context = check_consultation_slots(db)
         reply_result = generate_reply(dialogue, slot_context)
@@ -156,13 +236,8 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         )
 
         if settings.human_approval_enabled:
-            stage = {}
-            try:
-                stage = amocrm.lead_stage_snapshot(lead.amocrm_lead_id)
-                if stage.get("status_id"):
-                    lead.status_id = stage["status_id"]
-            except Exception as exc:
-                log_action(db, lead.id, "amocrm.get_lead_stage", "error", error=exc)
+            _mark_buffers_processed(db, buffers)
+            stage = _lead_stage_snapshot(db, lead)
             approval = ApprovalRequest(
                 lead_id=lead.id,
                 chat_id=lead.chat_id or "",
@@ -188,6 +263,7 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
             db.commit()
             return
 
+        _mark_buffers_processed(db, buffers)
         send_approved_reply(db, lead, conversation_id, triggering_message_id, reply, extracted)
     finally:
         db.close()
@@ -271,26 +347,70 @@ def update_integrations_after_approval(db, lead: Lead, extracted: dict) -> None:
         except Exception as exc:
             log_action(db, lead.id, "google_sheets.update_consultation", "error", extracted, error=exc)
 
+    if settings.amocrm_access_token:
+        apply_sales_stage_from_extracted(db, lead, extracted)
 
-def set_edit_session(db, manager_id: str, approval_id: int) -> None:
-    key = f"telegram_edit_session:{manager_id}"
+
+def _set_session(db, key: str, value: str) -> None:
     setting = db.scalar(select(Setting).where(Setting.key == key))
     if setting:
-        setting.value = str(approval_id)
+        setting.value = value
     else:
-        db.add(Setting(key=key, value=str(approval_id), is_secret=False))
+        db.add(Setting(key=key, value=value, is_secret=False))
     db.commit()
 
 
-def pop_edit_session(db, manager_id: str) -> int | None:
-    key = f"telegram_edit_session:{manager_id}"
+def _pop_session(db, key: str) -> str | None:
     setting = db.scalar(select(Setting).where(Setting.key == key))
     if not setting:
         return None
-    approval_id = int(setting.value)
+    value = setting.value
     db.delete(setting)
     db.commit()
-    return approval_id
+    return value
+
+
+def set_edit_session(db, manager_id: str, approval_id: int) -> None:
+    _set_session(db, f"telegram_edit_session:{manager_id}", str(approval_id))
+
+
+def pop_edit_session(db, manager_id: str) -> int | None:
+    value = _pop_session(db, f"telegram_edit_session:{manager_id}")
+    return int(value) if value else None
+
+
+def set_ai_edit_session(db, manager_id: str, approval_id: int) -> None:
+    _set_session(db, f"telegram_ai_edit_session:{manager_id}", str(approval_id))
+
+
+def pop_ai_edit_session(db, manager_id: str) -> int | None:
+    value = _pop_session(db, f"telegram_ai_edit_session:{manager_id}")
+    return int(value) if value else None
+
+
+def apply_ai_edited_reply(db, approval_id: int, manager_id: str, edit_prompt: str) -> ApprovalRequest | None:
+    approval = db.get(ApprovalRequest, approval_id)
+    if not approval:
+        return None
+    lead = db.get(Lead, approval.lead_id)
+    original = approval.edited_reply or approval.ai_reply
+    result = ai_edit_reply(original, approval.client_message, edit_prompt)
+    new_reply = str(result.content)
+    save_ai_usage(db, approval.lead_id, result)
+    approval.edited_reply = new_reply
+    approval.status = "edited"
+    approval.manager_telegram_id = manager_id
+    db.commit()
+    if lead:
+        move_lead_status(db, lead, settings.amocrm_status_on_edit, "approval_ai_edited")
+    log_action(
+        db,
+        approval.lead_id,
+        "telegram.approval_ai_edited",
+        "success",
+        {"approval_id": approval_id, "edit_prompt": edit_prompt, "new_reply": new_reply},
+    )
+    return approval
 
 
 def approve_request(db, approval_id: int, manager_id: str) -> bool:
