@@ -1,0 +1,62 @@
+from functools import lru_cache
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_ignore_empty=True,
+        extra="ignore",
+    )
+
+    app_env: str = "production"
+    api_title: str = "Demi Results AI Bot"
+    database_url: str = "postgresql+psycopg://demi:demi@postgres:5432/demi_results"
+    redis_url: str = "redis://redis:6379/0"
+    cors_origins: str = "http://localhost:3000"
+    webhook_rate_limit_per_minute: int = 120
+    message_buffer_seconds: int = 10
+
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4.1-mini"
+    openai_extractor_model: str = "gpt-4.1-mini"
+    openai_input_cost_per_1m_tokens: float = 0
+    openai_output_cost_per_1m_tokens: float = 0
+
+    amocrm_base_url: str = "https://demicosmetics1.amocrm.ru"
+    amocrm_access_token: str = ""
+    amojo_base_url: str = "https://amojo.amocrm.ru"
+
+    google_sheets_enabled: bool = False
+    google_service_account_json: str = ""
+    google_service_account_file: str = ""
+    google_sheets_spreadsheet_id: str = ""
+
+    timezone: str = "Asia/Bishkek"
+    schedule_start_dates: str = "2026-05-19,2026-05-20"
+    consultation_start_hour: int = 10
+    consultation_end_hour: int = 21
+    consultation_interval_minutes: int = 20
+    do_not_offer_today_after_hour: int = 18
+
+    admin_api_key: str = Field(default="", description="Optional API key for admin routes.")
+    human_approval_enabled: bool = True
+    telegram_bot_token: str = ""
+    telegram_manager_chat_id: str = ""
+    telegram_webhook_secret: str = ""
+    public_backend_url: str = ""
+    amocrm_status_on_approve: int | None = None
+    amocrm_status_on_edit: int | None = None
+    amocrm_status_on_reject: int | None = None
+    amocrm_status_on_save: int | None = None
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()

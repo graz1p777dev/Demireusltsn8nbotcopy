@@ -1,0 +1,17 @@
+{
+  "account[id]": "123456",
+  "account[_links][self]": "https://demicosmetics1.amocrm.ru",
+  "message[add][0][id]": "seed-message-001",
+  "message[add][0][chat_id]": "seed-chat-001",
+  "message[add][0][author][id]": "seed-client-001",
+  "message[add][0][author][name]": "+996700111222",
+  "message[add][0][element_id]": "100200300",
+  "message[add][0][entity_id]": "100200300",
+  "message[add][0][element_type]": "lead",
+  "message[add][0][contact_id]": "555777",
+  "message[add][0][origin]": "amocrm",
+  "message[add][0][type]": "incoming",
+  "message[add][0][text]": "Здравствуйте, хочу консультацию. У меня акне и постакне.",
+  "message[add][0][created_at]": "1781902800"
+}
+
