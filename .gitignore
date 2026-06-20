@@ -9,3 +9,4 @@ frontend/.next/
 frontend/npm-debug.log*
 *.pyc
 .DS_Store
+.vercel

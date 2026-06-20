@@ -106,6 +106,15 @@ RUN_MIGRATIONS_ON_STARTUP=false
 
 Когда `DATABASE_URL` уже заполнен и база доступна, можно временно поставить `RUN_MIGRATIONS_ON_STARTUP=true` для первого deploy, либо выполнить `alembic upgrade head` отдельной one-off командой в Railway. После миграций лучше вернуть `false`, чтобы обычные redeploy не падали из-за временной недоступности базы.
 
+Если тариф Railway не позволяет создать отдельный worker service, можно временно запускать Celery worker внутри web-сервиса:
+
+```env
+RUN_WORKER_IN_WEB=true
+CELERY_CONCURRENCY=2
+```
+
+Это подходит для проверки и небольшого трафика. Когда появится отдельный Railway worker, поставьте `RUN_WORKER_IN_WEB=false`, чтобы не обрабатывать задачи двумя worker одновременно.
+
 ## Обязательные env
 
 ```env
@@ -125,6 +134,10 @@ AMOCRM_STATUS_ON_APPROVE=
 AMOCRM_STATUS_ON_EDIT=
 AMOCRM_STATUS_ON_REJECT=
 AMOCRM_STATUS_ON_SAVE=
+AMOCRM_STATUS_PRIMARY_CONTACT=
+AMOCRM_STATUS_QUALIFIED=
+AMOCRM_STATUS_CONSULTATION_SCHEDULED=
+AMOCRM_STATUS_UNSORTED=
 ```
 
 Google Sheets включается отдельно:
@@ -209,6 +222,14 @@ AMOCRM_STATUS_ON_SAVE=123459
 curl -H "Authorization: Bearer $AMOCRM_ACCESS_TOKEN" \
   "$AMOCRM_BASE_URL/api/v4/leads/pipelines"
 ```
+
+Автоматическая маршрутизация входящих сообщений:
+
+- если сообщение связано с продажей, подбором ухода или консультацией, бот переводит лид в `AMOCRM_STATUS_PRIMARY_CONTACT` и продолжает диалог;
+- если сообщение явно не о продаже, например сотрудничество, реклама, вакансия или спам, бот переводит лид в `AMOCRM_STATUS_UNSORTED` и не отправляет sales-ответ;
+- если после подтвержденного ответа заполнены данные карточки клиента, бот переводит лид в `AMOCRM_STATUS_QUALIFIED`;
+- если консультация подтверждена на конкретные дату и время, бот переводит лид в `AMOCRM_STATUS_CONSULTATION_SCHEDULED`;
+- если лид уже находится в `AMOCRM_STATUS_CONSULTATION_SCHEDULED`, бот новые сообщения не обрабатывает.
 
 `TELEGRAM_MANAGER_CHAT_ID` отвечает только за то, куда бот отправляет карточки. `TELEGRAM_ALLOWED_MANAGER_IDS` отвечает за то, кто имеет право нажимать `Принять`, `Изменить`, `Отклонить`, `Сохранить`, смотреть память и использовать `/no-sorted`. Если карточки отправляются в группу, обязательно заполните `TELEGRAM_ALLOWED_MANAGER_IDS`, иначе участники группы не смогут принимать решения.
 
