@@ -46,7 +46,14 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
     if callback := update.get("callback_query"):
         callback_id = callback["id"]
         manager_id = str(callback["from"]["id"])
+        callback_chat_id = str(callback.get("message", {}).get("chat", {}).get("id", ""))
+        if not telegram.is_authorized_manager(manager_id, callback_chat_id):
+            telegram.answer_callback(callback_id, "Нет доступа")
+            return {"ok": False, "error": "unauthorized_manager"}
         data = callback.get("data", "")
+        if ":" not in data:
+            telegram.answer_callback(callback_id, "Некорректная кнопка")
+            return {"ok": False, "error": "invalid_callback"}
         action, raw_id = data.split(":", 1)
         approval_id = int(raw_id)
         approval = db.get(ApprovalRequest, approval_id)
@@ -80,7 +87,10 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
 
     if message := update.get("message"):
         manager_id = str(message.get("from", {}).get("id", ""))
+        message_chat_id = str(message.get("chat", {}).get("id", ""))
         text = message.get("text", "").strip()
+        if not telegram.is_authorized_manager(manager_id, message_chat_id):
+            return {"ok": False, "error": "unauthorized_manager"}
         if text in {"/no-sorted", "/nosorted", "/unsorted"}:
             approvals = db.scalars(
                 select(ApprovalRequest)

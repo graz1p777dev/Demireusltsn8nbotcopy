@@ -98,6 +98,7 @@ ADMIN_API_KEY=
 HUMAN_APPROVAL_ENABLED=true
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_MANAGER_CHAT_ID=
+TELEGRAM_ALLOWED_MANAGER_IDS=
 TELEGRAM_WEBHOOK_SECRET=
 PUBLIC_BACKEND_URL=https://your-railway-domain.up.railway.app
 RUN_MIGRATIONS_ON_STARTUP=false
@@ -193,6 +194,7 @@ Telegram env:
 HUMAN_APPROVAL_ENABLED=true
 TELEGRAM_BOT_TOKEN=токен от @BotFather
 TELEGRAM_MANAGER_CHAT_ID=id менеджера или группы
+TELEGRAM_ALLOWED_MANAGER_IDS=id менеджеров через запятую
 TELEGRAM_WEBHOOK_SECRET=любая длинная случайная строка
 PUBLIC_BACKEND_URL=https://YOUR_BACKEND_DOMAIN
 AMOCRM_STATUS_ON_APPROVE=123456
@@ -208,7 +210,9 @@ curl -H "Authorization: Bearer $AMOCRM_ACCESS_TOKEN" \
   "$AMOCRM_BASE_URL/api/v4/leads/pipelines"
 ```
 
-Как получить `TELEGRAM_MANAGER_CHAT_ID`:
+`TELEGRAM_MANAGER_CHAT_ID` отвечает только за то, куда бот отправляет карточки. `TELEGRAM_ALLOWED_MANAGER_IDS` отвечает за то, кто имеет право нажимать `Принять`, `Изменить`, `Отклонить`, `Сохранить`, смотреть память и использовать `/no-sorted`. Если карточки отправляются в группу, обязательно заполните `TELEGRAM_ALLOWED_MANAGER_IDS`, иначе участники группы не смогут принимать решения.
+
+Как получить `TELEGRAM_MANAGER_CHAT_ID` и `TELEGRAM_ALLOWED_MANAGER_IDS`:
 
 1. Напишите любое сообщение своему Telegram-боту.
 2. Откройте:
@@ -217,7 +221,14 @@ curl -H "Authorization: Bearer $AMOCRM_ACCESS_TOKEN" \
 https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/getUpdates
 ```
 
-3. Возьмите `message.chat.id`.
+3. Возьмите `message.chat.id` для `TELEGRAM_MANAGER_CHAT_ID`.
+4. Возьмите `message.from.id` для `TELEGRAM_ALLOWED_MANAGER_IDS`.
+
+Пример для двух менеджеров:
+
+```env
+TELEGRAM_ALLOWED_MANAGER_IDS=123456789,987654321
+```
 
 Как поставить Telegram webhook:
 

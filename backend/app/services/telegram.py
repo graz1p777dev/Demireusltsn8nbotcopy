@@ -10,6 +10,23 @@ def telegram_enabled() -> bool:
     return bool(settings.telegram_bot_token and settings.telegram_manager_chat_id)
 
 
+def allowed_manager_ids() -> set[str]:
+    return {
+        item.strip()
+        for item in settings.telegram_allowed_manager_ids.split(",")
+        if item.strip()
+    }
+
+
+def is_authorized_manager(manager_id: str, chat_id: str | None = None) -> bool:
+    allowed_ids = allowed_manager_ids()
+    if allowed_ids:
+        return manager_id in allowed_ids
+    if chat_id and str(chat_id) == str(settings.telegram_manager_chat_id):
+        return str(settings.telegram_manager_chat_id) == manager_id
+    return str(settings.telegram_manager_chat_id) == manager_id
+
+
 def _api_url(method: str) -> str:
     return f"https://api.telegram.org/bot{settings.telegram_bot_token}/{method}"
 
