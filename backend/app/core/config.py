@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
     openai_extractor_model: str = "gpt-4.1-mini"
+    deepseek_api_key: str = ""
     openai_input_cost_per_1m_tokens: float = 0
     openai_output_cost_per_1m_tokens: float = 0
 

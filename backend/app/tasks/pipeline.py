@@ -252,7 +252,7 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
             db.add(approval)
             db.commit()
             try:
-                response = telegram.send_approval_card(approval, lead)
+                response = telegram.send_approval_card(approval, lead, messages_count=len(dialogue))
                 message_id = response.get("result", {}).get("message_id")
                 if message_id:
                     approval.telegram_message_id = str(message_id)
@@ -444,6 +444,10 @@ def approve_request(db, approval_id: int, manager_id: str) -> bool:
     )
     if ok:
         save_training_example(db, approval)
+    try:
+        telegram.edit_approval_card(approval, lead, decision="✅ Принято")
+    except Exception:
+        pass
     return ok
 
 
@@ -492,6 +496,10 @@ def reject_request(db, approval_id: int, manager_id: str) -> bool:
     lead = db.get(Lead, approval.lead_id)
     if lead:
         move_lead_status(db, lead, settings.amocrm_status_on_reject, "approval_rejected")
+        try:
+            telegram.edit_approval_card(approval, lead, decision="❌ Отклонено")
+        except Exception:
+            pass
     log_action(db, approval.lead_id, "telegram.approval_rejected", "success", {"approval_id": approval_id})
     return True
 
@@ -506,6 +514,10 @@ def save_request(db, approval_id: int, manager_id: str) -> bool:
     lead = db.get(Lead, approval.lead_id)
     if lead:
         move_lead_status(db, lead, settings.amocrm_status_on_save, "approval_saved_unsorted")
+        try:
+            telegram.edit_approval_card(approval, lead, decision="💾 Сохранено")
+        except Exception:
+            pass
     log_action(db, approval.lead_id, "telegram.approval_saved", "success", {"approval_id": approval_id})
     return True
 

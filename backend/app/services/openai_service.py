@@ -89,33 +89,57 @@ def generate_reply(dialogue: list[dict], slot_context: dict) -> AIResult:
     )
 
 
+def _deepseek_client() -> OpenAI:
+    return OpenAI(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com/v1")
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def classify_sales_intent(dialogue: list[dict], latest_message: str) -> AIResult:
-    fallback = {"is_sales": True, "reason": "openai_api_key_missing"}
-    if not settings.openai_api_key:
-        return AIResult(content=fallback, model=settings.openai_extractor_model, purpose="sales_intent")
+    fallback = {"is_sales": True, "reason": "no_key"}
+    model = "deepseek-chat"
+
+    if not settings.deepseek_api_key:
+        # fallback to openai if deepseek not configured
+        if not settings.openai_api_key:
+            return AIResult(content=fallback, model=model, purpose="sales_intent")
+        started = perf_counter()
+        response = _client().chat.completions.create(
+            model=settings.openai_extractor_model,
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": SALES_INTENT_SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(
+                    {"dialogue": dialogue[-20:], "latest_message": latest_message},
+                    ensure_ascii=False,
+                )},
+            ],
+        )
+        latency_ms = int((perf_counter() - started) * 1000)
+        content = fallback | json.loads(response.choices[0].message.content or "{}")
+        content["is_sales"] = bool(content.get("is_sales"))
+        return _result(content=content, model=settings.openai_extractor_model,
+                       purpose="sales_intent", usage=_usage_payload(response), latency_ms=latency_ms)
+
     started = perf_counter()
-    response = _client().chat.completions.create(
-        model=settings.openai_extractor_model,
+    response = _deepseek_client().chat.completions.create(
+        model=model,
         temperature=0,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SALES_INTENT_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {"dialogue": dialogue[-20:], "latest_message": latest_message},
-                    ensure_ascii=False,
-                ),
-            },
+            {"role": "user", "content": json.dumps(
+                {"dialogue": dialogue[-20:], "latest_message": latest_message},
+                ensure_ascii=False,
+            )},
         ],
     )
     latency_ms = int((perf_counter() - started) * 1000)
     content = fallback | json.loads(response.choices[0].message.content or "{}")
     content["is_sales"] = bool(content.get("is_sales"))
-    return _result(
+    return AIResult(
         content=content,
-        model=settings.openai_extractor_model,
+        model=model,
         purpose="sales_intent",
         usage=_usage_payload(response),
         latency_ms=latency_ms,
