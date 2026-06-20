@@ -44,6 +44,8 @@ Healthcheck: `http://localhost:8000/health`
 Админку можно деплоить отдельно на Vercel. В этом режиме браузер не ходит напрямую в FastAPI.
 Next.js использует server-side proxy route `/api/backend/*`, добавляет `X-Admin-API-Key` на стороне Vercel и прокидывает запросы в backend.
 
+Подробная инструкция: [VERCEL_DEPLOY.md](./VERCEL_DEPLOY.md)
+
 Vercel environment variables для frontend:
 
 ```env
