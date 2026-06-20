@@ -100,7 +100,10 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_MANAGER_CHAT_ID=
 TELEGRAM_WEBHOOK_SECRET=
 PUBLIC_BACKEND_URL=https://your-railway-domain.up.railway.app
+RUN_MIGRATIONS_ON_STARTUP=false
 ```
+
+Когда `DATABASE_URL` уже заполнен и база доступна, можно временно поставить `RUN_MIGRATIONS_ON_STARTUP=true` для первого deploy, либо выполнить `alembic upgrade head` отдельной one-off командой в Railway. После миграций лучше вернуть `false`, чтобы обычные redeploy не падали из-за временной недоступности базы.
 
 ## Обязательные env
 

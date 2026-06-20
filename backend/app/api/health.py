@@ -8,7 +8,11 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health")
 def health() -> dict:
-    with engine.connect() as connection:
-        connection.execute(text("select 1"))
     return {"status": "ok"}
 
+
+@router.get("/health/db")
+def health_db() -> dict:
+    with engine.connect() as connection:
+        connection.execute(text("select 1"))
+    return {"status": "ok", "database": "ok"}
