@@ -1,9 +1,32 @@
+from datetime import datetime
 from html import escape
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from app.core.config import settings
 from app.models.entities import ApprovalRequest, Lead
+
+
+def calc_score(extracted: dict | None, messages_count: int = 1) -> int:
+    score = 10
+    if not extracted:
+        return score
+    if extracted.get("skin_problem"):
+        score += 20
+    if extracted.get("city"):
+        score += 15
+    if extracted.get("experience"):
+        score += 10
+    if extracted.get("consultation_confirmed"):
+        score += 30
+    elif extracted.get("consultation_date"):
+        score += 15
+    if messages_count >= 5:
+        score += 10
+    elif messages_count >= 3:
+        score += 5
+    return min(score, 99)
 
 
 def telegram_enabled() -> bool:
@@ -49,27 +72,31 @@ def memory_lines(extracted: dict | None) -> str:
     )
 
 
-def approval_card(approval: ApprovalRequest, lead: Lead) -> str:
-    client_name = lead.client.name if lead.client else "Без имени"
-    contact = lead.client.phone if lead.client and lead.client.phone else lead.contact_id or "-"
-    score = 78
+def approval_card(approval: ApprovalRequest, lead: Lead, decision: str | None = None, messages_count: int = 1) -> str:
+    client_name = lead.client.name if lead.client else “Без имени”
+    contact = lead.client.phone if lead.client and lead.client.phone else lead.contact_id or “-”
+    score = calc_score(approval.extracted_fields, messages_count)
     reply = approval.edited_reply or approval.ai_reply
-    return (
-        "🟣 <b>Новый AI-ответ</b>\n\n"
-        f"👤 <b>Клиент:</b> {escape(client_name or 'Без имени')}\n"
-        f"📞 <b>Контакт:</b> {escape(str(contact))}\n"
-        f"🧾 <b>Lead ID:</b> {escape(lead.amocrm_lead_id)}\n"
-        f"📍 <b>Этап amoCRM:</b> {escape(approval.amocrm_stage_name or str(approval.amocrm_status_id or 'неизвестно'))}\n"
-        f"🔥 <b>Score:</b> {score}%\n\n"
-        f"💬 <b>Сообщение клиента:</b>\n“{escape(approval.client_message)}”\n\n"
-        f"🤖 <b>Ответ бота:</b>\n{escape(reply)}\n\n"
-        f"🧠 <b>Память:</b>\n{memory_lines(approval.extracted_fields)}\n\n"
-        "⚙️ <b>Действия после принятия:</b>\n"
-        "- отправить ответ в amoCRM\n"
-        "- сохранить ответ в историю\n"
-        "- обновить поля сделки\n"
-        "- сохранить исправление менеджера для улучшения бота"
+    text = (
+        “🟣 <b>Новый AI-ответ</b>\n\n”
+        f”👤 <b>Клиент:</b> {escape(client_name or 'Без имени')}\n”
+        f”📞 <b>Контакт:</b> {escape(str(contact))}\n”
+        f”🧾 <b>Lead ID:</b> {escape(lead.amocrm_lead_id)}\n”
+        f”📍 <b>Этап amoCRM:</b> {escape(approval.amocrm_stage_name or str(approval.amocrm_status_id or 'неизвестно'))}\n”
+        f”🔥 <b>Score:</b> {score}%\n\n”
+        f”💬 <b>Сообщение клиента:</b>\n”{escape(approval.client_message)}”\n\n”
+        f”🤖 <b>Ответ бота:</b>\n{escape(reply)}\n\n”
+        f”🧠 <b>Память:</b>\n{memory_lines(approval.extracted_fields)}\n\n”
+        “⚙️ <b>Действия после принятия:</b>\n”
+        “- отправить ответ в amoCRM\n”
+        “- сохранить ответ в историю\n”
+        “- обновить поля сделки\n”
+        “- сохранить исправление менеджера для улучшения бота”
     )
+    if decision:
+        now = datetime.now(ZoneInfo(settings.timezone)).strftime(“%d.%m.%Y %H:%M”)
+        text += f”\n\n━━━━━━━━━━━━━━━━━━━━\n{decision} · {now}”
+    return text
 
 
 def approval_keyboard(approval_id: int, lead: Lead) -> dict:
@@ -94,7 +121,7 @@ def approval_keyboard(approval_id: int, lead: Lead) -> dict:
     }
 
 
-def send_approval_card(approval: ApprovalRequest, lead: Lead) -> dict:
+def send_approval_card(approval: ApprovalRequest, lead: Lead, messages_count: int = 1) -> dict:
     if not telegram_enabled():
         return {"skipped": True, "reason": "telegram not configured"}
     with httpx.Client(timeout=20) as client:
@@ -102,7 +129,7 @@ def send_approval_card(approval: ApprovalRequest, lead: Lead) -> dict:
             _api_url("sendMessage"),
             json={
                 "chat_id": settings.telegram_manager_chat_id,
-                "text": approval_card(approval, lead),
+                "text": approval_card(approval, lead, messages_count=messages_count),
                 "parse_mode": "HTML",
                 "reply_markup": approval_keyboard(approval.id, lead),
                 "disable_web_page_preview": True,
@@ -112,18 +139,19 @@ def send_approval_card(approval: ApprovalRequest, lead: Lead) -> dict:
         return response.json()
 
 
-def edit_approval_card(approval: ApprovalRequest, lead: Lead) -> dict:
+def edit_approval_card(approval: ApprovalRequest, lead: Lead, decision: str | None = None, messages_count: int = 1) -> dict:
     if not telegram_enabled() or not approval.telegram_message_id:
         return {"skipped": True}
+    keyboard = approval_keyboard(approval.id, lead) if not decision else None
     with httpx.Client(timeout=20) as client:
         response = client.post(
             _api_url("editMessageText"),
             json={
                 "chat_id": settings.telegram_manager_chat_id,
                 "message_id": approval.telegram_message_id,
-                "text": approval_card(approval, lead),
+                "text": approval_card(approval, lead, decision=decision, messages_count=messages_count),
                 "parse_mode": "HTML",
-                "reply_markup": approval_keyboard(approval.id, lead),
+                **({"reply_markup": keyboard} if keyboard else {"reply_markup": {"inline_keyboard": []}}),
                 "disable_web_page_preview": True,
             },
         )
