@@ -28,6 +28,7 @@ class Settings(BaseSettings):
 
     amocrm_base_url: str = "https://demicosmetics1.amocrm.ru"
     amocrm_access_token: str = ""
+    amocrm_webhook_secret: str = ""
     amojo_base_url: str = "https://amojo.amocrm.ru"
 
     google_sheets_enabled: bool = False
@@ -53,6 +54,10 @@ class Settings(BaseSettings):
     amocrm_status_on_edit: int | None = None
     amocrm_status_on_reject: int | None = None
     amocrm_status_on_save: int | None = None
+    amocrm_status_primary_contact: int | None = None
+    amocrm_status_qualified: int | None = None
+    amocrm_status_consultation_scheduled: int | None = None
+    amocrm_status_unsorted: int | None = None
 
     @field_validator("database_url")
     @classmethod
