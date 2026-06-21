@@ -25,6 +25,16 @@ class TimestampMixin:
     )
 
 
+class CrmUser(Base, TimestampMixin):
+    __tablename__ = "crm_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
 class Client(Base, TimestampMixin):
     __tablename__ = "clients"
 

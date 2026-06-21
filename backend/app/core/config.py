@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     do_not_offer_today_after_hour: int = 18
 
     admin_api_key: str = Field(default="", description="Optional API key for admin routes.")
+    jwt_secret: str = Field(default="change-me-in-production", description="Secret for JWT signing.")
     human_approval_enabled: bool = True
     telegram_bot_token: str = ""
     telegram_manager_chat_id: str = ""
