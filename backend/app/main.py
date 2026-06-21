@@ -2,7 +2,7 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.api import admin, health, slots, webhooks
 from app.api import auth as auth_router
@@ -40,11 +40,33 @@ INITIAL_USERS = [
 
 
 @app.on_event("startup")
-def seed_crm_users() -> None:
+def setup_crm_users() -> None:
     from app.api.auth import hash_password
-    from app.db.session import SessionLocal
+    from app.db.session import SessionLocal, engine
     from app.models.entities import CrmUser
 
+    # Auto-create crm_users table if it doesn't exist (no alembic required)
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS crm_users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(64) NOT NULL UNIQUE,
+                    password_hash VARCHAR(255) NOT NULL,
+                    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_crm_users_username ON crm_users (username)"))
+            conn.commit()
+        log.info("crm_users table ready")
+    except Exception as e:
+        log.warning("Could not create crm_users table: %s", e)
+        return
+
+    # Seed initial users
     db = SessionLocal()
     try:
         for u in INITIAL_USERS:
@@ -58,7 +80,7 @@ def seed_crm_users() -> None:
                 log.info("Seeded CRM user: %s", u["username"])
         db.commit()
     except Exception as e:
-        log.warning("CRM user seed failed (table may not exist yet): %s", e)
+        log.warning("CRM user seed failed: %s", e)
         db.rollback()
     finally:
         db.close()
