@@ -1,4 +1,5 @@
 import json
+import re
 from time import perf_counter
 
 from openai import OpenAI
@@ -7,6 +8,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
 from app.services.prompts import EXTRACTOR_SYSTEM_PROMPT, SALES_AGENT_SYSTEM_PROMPT, SALES_INTENT_SYSTEM_PROMPT
+
+_PICTURE_RE = re.compile(r'\[picture\]\s*(https?://\S+)')
 
 
 class AIResult(BaseModel):
@@ -56,6 +59,23 @@ def _result(content: str | dict, model: str, purpose: str, usage: dict, latency_
     )
 
 
+def _extract_image_urls(dialogue: list[dict]) -> list[str]:
+    urls = []
+    for msg in dialogue:
+        if msg.get("role") == "user":
+            for m in _PICTURE_RE.finditer(msg.get("content", "")):
+                urls.append(m.group(1))
+    return urls
+
+
+def _clean_dialogue(dialogue: list[dict]) -> list[dict]:
+    cleaned = []
+    for msg in dialogue:
+        content = _PICTURE_RE.sub("[клиент прислал фото]", msg.get("content", ""))
+        cleaned.append({"role": msg["role"], "content": content})
+    return cleaned
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def generate_reply(dialogue: list[dict], slot_context: dict) -> AIResult:
     if not settings.openai_api_key:
@@ -65,18 +85,27 @@ def generate_reply(dialogue: list[dict], slot_context: dict) -> AIResult:
             purpose="sales_agent",
         )
     started = perf_counter()
+
+    image_urls = _extract_image_urls(dialogue)
+    cleaned = _clean_dialogue(dialogue)
+    context_text = json.dumps(
+        {"dialogue": cleaned, "check_consultation_slots": slot_context},
+        ensure_ascii=False,
+    )
+
+    if image_urls:
+        content: list[dict] = [{"type": "image_url", "image_url": {"url": url}} for url in image_urls]
+        content.append({"type": "text", "text": context_text})
+        user_message: dict = {"role": "user", "content": content}
+    else:
+        user_message = {"role": "user", "content": context_text}
+
     response = _client().chat.completions.create(
         model=settings.openai_model,
         temperature=0.5,
         messages=[
             {"role": "system", "content": SALES_AGENT_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {"dialogue": dialogue, "check_consultation_slots": slot_context},
-                    ensure_ascii=False,
-                ),
-            },
+            user_message,
         ],
     )
     latency_ms = int((perf_counter() - started) * 1000)
