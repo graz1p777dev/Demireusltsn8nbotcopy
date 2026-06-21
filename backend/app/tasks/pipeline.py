@@ -413,6 +413,19 @@ def apply_ai_edited_reply(db, approval_id: int, manager_id: str, edit_prompt: st
     return approval
 
 
+def _update_card_or_notify(approval: ApprovalRequest, lead: Lead, decision: str) -> None:
+    try:
+        if approval.telegram_message_id:
+            telegram.edit_approval_card(approval, lead, decision=decision)
+        else:
+            telegram.send_text(
+                settings.telegram_manager_chat_id,
+                f"{decision} — Lead {lead.amocrm_lead_id}",
+            )
+    except Exception:
+        pass
+
+
 def approve_request(db, approval_id: int, manager_id: str) -> bool:
     approval = db.get(ApprovalRequest, approval_id)
     if not approval or approval.status in {"sent", "approved"}:
@@ -420,34 +433,34 @@ def approve_request(db, approval_id: int, manager_id: str) -> bool:
     lead = db.get(Lead, approval.lead_id)
     if not lead:
         return False
+
+    approval.status = "approved"
+    approval.manager_telegram_id = manager_id
+    approval.approved_at = datetime.now(ZoneInfo(settings.timezone))
+    db.commit()
+    move_lead_status(db, lead, settings.amocrm_status_on_approve, "approval_accepted")
+
     latest_user_message = db.scalar(
         select(Message)
         .where(Message.lead_id == lead.id, Message.role == "user")
         .order_by(Message.created_at.desc())
         .limit(1)
     )
-    if not latest_user_message:
-        return False
-    approval.status = "approved"
-    approval.manager_telegram_id = manager_id
-    approval.approved_at = datetime.now(ZoneInfo(settings.timezone))
-    db.commit()
-    move_lead_status(db, lead, settings.amocrm_status_on_approve, "approval_accepted")
-    ok = send_approved_reply(
-        db,
-        lead,
-        latest_user_message.conversation_id,
-        str(approval.id),
-        approval.edited_reply or approval.ai_reply,
-        approval.extracted_fields,
-        approval,
-    )
-    if ok:
-        save_training_example(db, approval)
-    try:
-        telegram.edit_approval_card(approval, lead, decision="✅ Принято")
-    except Exception:
-        pass
+    ok = False
+    if latest_user_message:
+        ok = send_approved_reply(
+            db,
+            lead,
+            latest_user_message.conversation_id,
+            str(approval.id),
+            approval.edited_reply or approval.ai_reply,
+            approval.extracted_fields,
+            approval,
+        )
+        if ok:
+            save_training_example(db, approval)
+
+    _update_card_or_notify(approval, lead, "✅ Принято")
     return ok
 
 
@@ -496,10 +509,7 @@ def reject_request(db, approval_id: int, manager_id: str) -> bool:
     lead = db.get(Lead, approval.lead_id)
     if lead:
         move_lead_status(db, lead, settings.amocrm_status_on_reject, "approval_rejected")
-        try:
-            telegram.edit_approval_card(approval, lead, decision="❌ Отклонено")
-        except Exception:
-            pass
+        _update_card_or_notify(approval, lead, "❌ Отклонено")
     log_action(db, approval.lead_id, "telegram.approval_rejected", "success", {"approval_id": approval_id})
     return True
 
@@ -514,10 +524,7 @@ def save_request(db, approval_id: int, manager_id: str) -> bool:
     lead = db.get(Lead, approval.lead_id)
     if lead:
         move_lead_status(db, lead, settings.amocrm_status_on_save, "approval_saved_unsorted")
-        try:
-            telegram.edit_approval_card(approval, lead, decision="💾 Сохранено")
-        except Exception:
-            pass
+        _update_card_or_notify(approval, lead, "💾 Сохранено")
     log_action(db, approval.lead_id, "telegram.approval_saved", "success", {"approval_id": approval_id})
     return True
 
