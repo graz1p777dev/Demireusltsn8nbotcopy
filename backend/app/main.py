@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,37 +17,17 @@ from app.core.rate_limit import webhook_rate_limit_middleware
 configure_logging()
 log = logging.getLogger(__name__)
 
-app = FastAPI(title=settings.api_title)
-app.middleware("http")(webhook_rate_limit_middleware)
-app.middleware("http")(admin_auth_middleware)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-app.include_router(health.router)
-app.include_router(webhooks.router)
-app.include_router(admin.router)
-app.include_router(slots.router)
-app.include_router(auth_router.router)
-app.include_router(crm_users_router.router)
-
-
 INITIAL_USERS = [
     {"username": "samat", "password": "SamaT-0303-crm", "is_admin": True},
     {"username": "alihan", "password": "AlihaN-0303-crm", "is_admin": True},
 ]
 
 
-@app.on_event("startup")
-def setup_crm_users() -> None:
+def _setup_crm_users_sync() -> None:
     from app.api.auth import hash_password
     from app.db.session import SessionLocal, engine
     from app.models.entities import CrmUser
 
-    # Auto-create crm_users table if it doesn't exist (no alembic required)
     try:
         with engine.connect() as conn:
             conn.execute(text("""
@@ -66,7 +48,6 @@ def setup_crm_users() -> None:
         log.warning("Could not create crm_users table: %s", e)
         return
 
-    # Seed initial users
     db = SessionLocal()
     try:
         for u in INITIAL_USERS:
@@ -84,3 +65,32 @@ def setup_crm_users() -> None:
         db.rollback()
     finally:
         db.close()
+
+
+async def _setup_crm_users_bg() -> None:
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _setup_crm_users_sync)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    asyncio.create_task(_setup_crm_users_bg())
+    yield
+
+
+app = FastAPI(title=settings.api_title, lifespan=lifespan)
+app.middleware("http")(webhook_rate_limit_middleware)
+app.middleware("http")(admin_auth_middleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(health.router)
+app.include_router(webhooks.router)
+app.include_router(admin.router)
+app.include_router(slots.router)
+app.include_router(auth_router.router)
+app.include_router(crm_users_router.router)
