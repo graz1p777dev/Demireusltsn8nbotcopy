@@ -29,9 +29,17 @@ async function proxy(request: NextRequest, context: RouteContext) {
   });
 
   const contentType = response.headers.get("content-type") || "application/json";
+  const responseHeaders = new Headers({ "content-type": contentType });
+
+  // Forward Set-Cookie so auth cookies reach the browser
+  const cookies = response.headers.getSetCookie
+    ? response.headers.getSetCookie()
+    : (response.headers.get("set-cookie") ? [response.headers.get("set-cookie")!] : []);
+  for (const c of cookies) responseHeaders.append("set-cookie", c);
+
   return new NextResponse(await response.text(), {
     status: response.status,
-    headers: { "content-type": contentType },
+    headers: responseHeaders,
   });
 }
 
