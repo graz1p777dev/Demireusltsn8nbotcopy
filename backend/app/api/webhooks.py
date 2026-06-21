@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.entities import ApprovalRequest, Lead
 from app.schemas.amocrm import parse_amocrm_webhook
-from app.services import telegram
+from app.services import amocrm, telegram
 from app.services.repository import upsert_incoming
 from app.tasks.pipeline import (
     apply_ai_edited_reply,
@@ -67,9 +67,47 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             telegram.answer_callback(callback_id, "Некорректная кнопка")
             return {"ok": False, "error": "invalid_callback"}
         action, raw_id = data.split(":", 1)
+
+        # set_stage carries two IDs: "approval_id:stage_id"
+        if action == "set_stage":
+            approval_id_str, stage_id_str = raw_id.split(":", 1)
+            approval = db.get(ApprovalRequest, int(approval_id_str))
+            lead = db.get(Lead, approval.lead_id) if approval else None
+            if not lead:
+                telegram.answer_callback(callback_id, "Лид не найден")
+                return {"ok": False, "error": "lead_not_found"}
+            try:
+                amocrm.patch_lead_status(lead.amocrm_lead_id, int(stage_id_str))
+                telegram.answer_callback(callback_id, "✅ Этап изменён")
+            except Exception:
+                telegram.answer_callback(callback_id, "Ошибка при смене этапа")
+            return {"ok": True, "action": action}
+
         approval_id = int(raw_id)
         approval = db.get(ApprovalRequest, approval_id)
         lead = db.get(Lead, approval.lead_id) if approval else None
+
+        if action == "move_stage":
+            if not approval or not lead:
+                telegram.answer_callback(callback_id, "Лид не найден")
+                return {"ok": False, "error": "lead_not_found"}
+            pipeline_id = approval.amocrm_pipeline_id
+            if not pipeline_id:
+                telegram.answer_callback(callback_id, "Pipeline не определён")
+                return {"ok": False, "error": "no_pipeline"}
+            try:
+                pipeline = amocrm.get_pipeline(int(pipeline_id))
+                stages = pipeline.get("_embedded", {}).get("statuses", [])
+            except Exception:
+                telegram.answer_callback(callback_id, "Не удалось загрузить этапы")
+                return {"ok": False, "error": "pipeline_fetch_error"}
+            telegram.answer_callback(callback_id)
+            telegram.send_stages_menu(manager_id, stages, approval_id)
+            return {"ok": True, "action": action}
+
+        if action == "cancel_stage":
+            telegram.answer_callback(callback_id, "Отменено")
+            return {"ok": True, "action": action}
 
         if action == "approve":
             ok = approve_request(db, approval_id, manager_id)

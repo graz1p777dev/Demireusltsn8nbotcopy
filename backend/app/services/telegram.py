@@ -115,10 +115,51 @@ def approval_keyboard(approval_id: int, lead: Lead) -> dict:
                 {"text": "🧠 Память", "callback_data": f"memory:{approval_id}"},
             ],
             [
+                {"text": "📂 Переместить на этап", "callback_data": f"move_stage:{approval_id}"},
+            ],
+            [
                 {"text": "📋 Открыть лид", "url": lead_url(lead)},
             ],
         ]
     }
+
+
+def stages_keyboard(stages: list[dict], approval_id: int) -> dict:
+    rows = []
+    for stage in stages:
+        stage_id = stage.get("id")
+        stage_name = stage.get("name", "")
+        if stage_id and stage_name:
+            rows.append([{
+                "text": stage_name,
+                "callback_data": f"set_stage:{approval_id}:{stage_id}",
+            }])
+    rows.append([{"text": "✖ Отмена", "callback_data": f"cancel_stage:{approval_id}"}])
+    return {"inline_keyboard": rows}
+
+
+def send_stages_menu(chat_id: str | int, stages: list[dict], approval_id: int) -> dict:
+    if not settings.telegram_bot_token:
+        return {"skipped": True}
+    with httpx.Client(timeout=20) as client:
+        response = client.post(
+            _api_url("sendMessage"),
+            json={
+                "chat_id": chat_id,
+                "text": "📂 <b>Выберите этап для перемещения лида:</b>",
+                "parse_mode": "HTML",
+                "reply_markup": stages_keyboard(stages, approval_id),
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+def delete_message(chat_id: str | int, message_id: int) -> None:
+    if not settings.telegram_bot_token:
+        return
+    with httpx.Client(timeout=10) as client:
+        client.post(_api_url("deleteMessage"), json={"chat_id": chat_id, "message_id": message_id})
 
 
 def send_approval_card(approval: ApprovalRequest, lead: Lead, messages_count: int = 1) -> dict:
