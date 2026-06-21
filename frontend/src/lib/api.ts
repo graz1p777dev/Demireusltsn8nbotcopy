@@ -20,11 +20,11 @@ export async function apiGet<T>(path: string): Promise<T> {
   return response.json();
 }
 
-export async function apiJson<T>(path: string, method: string, body: unknown): Promise<T> {
+export async function apiJson<T>(path: string, method: string, body?: unknown): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!response.ok) throw new Error(`API ${response.status}`);
   return response.json();
