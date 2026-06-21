@@ -73,29 +73,29 @@ def memory_lines(extracted: dict | None) -> str:
 
 
 def approval_card(approval: ApprovalRequest, lead: Lead, decision: str | None = None, messages_count: int = 1) -> str:
-    client_name = lead.client.name if lead.client else “Без имени”
-    contact = lead.client.phone if lead.client and lead.client.phone else lead.contact_id or “-”
+    client_name = lead.client.name if lead.client else "Без имени"
+    contact = lead.client.phone if lead.client and lead.client.phone else lead.contact_id or "-"
     score = calc_score(approval.extracted_fields, messages_count)
     reply = approval.edited_reply or approval.ai_reply
     text = (
-        “🟣 <b>Новый AI-ответ</b>\n\n”
-        f”👤 <b>Клиент:</b> {escape(client_name or 'Без имени')}\n”
-        f”📞 <b>Контакт:</b> {escape(str(contact))}\n”
-        f”🧾 <b>Lead ID:</b> {escape(lead.amocrm_lead_id)}\n”
-        f”📍 <b>Этап amoCRM:</b> {escape(approval.amocrm_stage_name or str(approval.amocrm_status_id or 'неизвестно'))}\n”
-        f”🔥 <b>Score:</b> {score}%\n\n”
-        f”💬 <b>Сообщение клиента:</b>\n”{escape(approval.client_message)}”\n\n”
-        f”🤖 <b>Ответ бота:</b>\n{escape(reply)}\n\n”
-        f”🧠 <b>Память:</b>\n{memory_lines(approval.extracted_fields)}\n\n”
-        “⚙️ <b>Действия после принятия:</b>\n”
-        “- отправить ответ в amoCRM\n”
-        “- сохранить ответ в историю\n”
-        “- обновить поля сделки\n”
-        “- сохранить исправление менеджера для улучшения бота”
+        "🟣 <b>Новый AI-ответ</b>\n\n"
+        f"👤 <b>Клиент:</b> {escape(client_name or 'Без имени')}\n"
+        f"📞 <b>Контакт:</b> {escape(str(contact))}\n"
+        f"🧾 <b>Lead ID:</b> {escape(lead.amocrm_lead_id)}\n"
+        f"📍 <b>Этап amoCRM:</b> {escape(approval.amocrm_stage_name or str(approval.amocrm_status_id or 'неизвестно'))}\n"
+        f"🔥 <b>Score:</b> {score}%\n\n"
+        f'💬 <b>Сообщение клиента:</b>\n"{escape(approval.client_message)}"\n\n'
+        f"🤖 <b>Ответ бота:</b>\n{escape(reply)}\n\n"
+        f"🧠 <b>Память:</b>\n{memory_lines(approval.extracted_fields)}\n\n"
+        "⚙️ <b>Действия после принятия:</b>\n"
+        "- отправить ответ в amoCRM\n"
+        "- сохранить ответ в историю\n"
+        "- обновить поля сделки\n"
+        "- сохранить исправление менеджера для улучшения бота"
     )
     if decision:
-        now = datetime.now(ZoneInfo(settings.timezone)).strftime(“%d.%m.%Y %H:%M”)
-        text += f”\n\n━━━━━━━━━━━━━━━━━━━━\n{decision} · {now}”
+        now = datetime.now(ZoneInfo(settings.timezone)).strftime("%d.%m.%Y %H:%M")
+        text += f"\n\n━━━━━━━━━━━━━━━━━━━━\n{decision} · {now}"
     return text
 
 
