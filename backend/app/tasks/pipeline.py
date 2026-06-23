@@ -112,7 +112,7 @@ def _has_card_data(extracted: dict) -> bool:
 
 
 def apply_sales_stage_from_extracted(db, lead: Lead, extracted: dict) -> None:
-    if extracted.get("consultation_confirmed") and extracted.get("consultation_date") and extracted.get("consultation_time"):
+    if extracted.get("consultation_confirmed"):
         move_lead_status(
             db,
             lead,
