@@ -115,6 +115,9 @@ def approval_keyboard(approval_id: int, lead: Lead) -> dict:
                 {"text": "🧠 Память", "callback_data": f"memory:{approval_id}"},
             ],
             [
+                {"text": "📅 Предложить консультацию", "callback_data": f"consult:{approval_id}"},
+            ],
+            [
                 {"text": "📂 Переместить на этап", "callback_data": f"move_stage:{approval_id}"},
             ],
             [

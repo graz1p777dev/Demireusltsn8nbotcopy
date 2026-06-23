@@ -136,6 +136,35 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             if approval:
                 telegram.send_text(manager_id, telegram.memory_lines(approval.extracted_fields))
             return {"ok": True, "action": action}
+        if action == "consult":
+            if not approval or not lead:
+                telegram.answer_callback(callback_id, "Лид не найден")
+                return {"ok": False, "error": "lead_not_found"}
+            from app.services.openai_service import ai_edit_reply
+            from app.tasks.pipeline import save_ai_usage
+            consult_prompt = (
+                "Перепиши ответ так, чтобы предложить клиенту записаться на бесплатную консультацию косметолога. "
+                "Упомяни его конкретную проблему кожи если она видна из диалога. "
+                "Одной фразой объясни ценность консультации (косметолог подберёт уход именно под его кожу). "
+                "Предложи 1-2 ближайших свободных времени если они известны. "
+                "Ответ короткий, тёплый, уважительный, на языке клиента."
+            )
+            try:
+                result = ai_edit_reply(
+                    approval.edited_reply or approval.ai_reply,
+                    approval.client_message,
+                    consult_prompt,
+                )
+                approval.edited_reply = str(result.content)
+                approval.status = "edited"
+                approval.manager_telegram_id = manager_id
+                db.commit()
+                save_ai_usage(db, approval.lead_id, result)
+                telegram.edit_approval_card(approval, lead)
+                telegram.answer_callback(callback_id, "📅 Предложение консультации готово")
+            except Exception:
+                telegram.answer_callback(callback_id, "Ошибка при генерации")
+            return {"ok": True, "action": action}
         if lead:
             telegram.answer_callback(callback_id, telegram.lead_url(lead))
         return {"ok": True, "action": action}
