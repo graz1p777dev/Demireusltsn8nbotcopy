@@ -95,6 +95,54 @@ export function LiveClockWidget() {
   );
 }
 
+/* ── Resizable Grid ── */
+function ResizableGrid({ children }: { children: React.ReactNode[] }) {
+  const [leftWidth, setLeftWidth] = useState(290);
+  const [dragging, setDragging] = useState(false);
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setDragging(true);
+
+    const startX = e.clientX;
+    const startWidth = leftWidth;
+
+    const onMove = (me: MouseEvent) => {
+      const delta = me.clientX - startX;
+      const containerWidth = containerRef.current?.offsetWidth ?? 800;
+      const next = Math.min(Math.max(startWidth + delta, 180), containerWidth - 300);
+      setLeftWidth(next);
+    };
+    const onUp = () => {
+      setDragging(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const [left, right] = React.Children.toArray(children);
+  return (
+    <div className="grid" ref={containerRef} style={{ userSelect: dragging ? "none" : undefined }}>
+      <div style={{ width: leftWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", borderRight: "none" }}
+           className="panel">
+        {left}
+      </div>
+      <div
+        className={`resize-handle${dragging ? " dragging" : ""}`}
+        onMouseDown={onMouseDown}
+      />
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg)" }}
+           className="panel">
+        {right}
+      </div>
+    </div>
+  );
+}
+
+
 /* ── Collapsible Section Shell ── */
 export function SectionShell({
   id, title, icon, children, defaultOpen = true,
@@ -193,9 +241,9 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
   };
 
   return (
-    <section className="grid">
+    <ResizableGrid>
       {/* ─── LEFT: conversation list ─── */}
-      <div className="panel">
+      <>
         <div className="panel-header">
           <strong>Диалоги</strong>
           <div className="panel-header-right">
@@ -249,10 +297,10 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
             </div>
           )}
         </div>
-      </div>
+      </>
 
       {/* ─── RIGHT: chat + details ─── */}
-      <div className="panel">
+      <>
         {/* Chat header */}
         <div className="chat-header">
           <div className="chat-header-info">
@@ -438,8 +486,8 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
           ))}
           {!collapsed.training && detail && !detail.training_examples.length && <p className="muted" style={{ fontSize: 12 }}>Нет примеров</p>}
         </div>
-      </div>
-    </section>
+      </>
+    </ResizableGrid>
   );
 }
 
