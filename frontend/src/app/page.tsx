@@ -1,6 +1,6 @@
 import { Bot, Clock, MessageSquare, Settings, Users } from "lucide-react";
 import { apiGet, Conversation } from "@/lib/api";
-import { Dashboard, LiveClockWidget, LogoutButton, UsersPanel } from "@/components/dashboard";
+import { Dashboard, LiveClockWidget, LogoutButton, UsersPanel, PromptPanel } from "@/components/dashboard";
 
 export default async function Home() {
   const conversations = await apiGet<Conversation[]>("/admin/conversations").catch(() => []);
@@ -67,6 +67,7 @@ export default async function Home() {
         </div>
 
         <Dashboard initialConversations={conversations} />
+        <PromptPanel />
         <UsersPanel />
       </main>
     </div>
