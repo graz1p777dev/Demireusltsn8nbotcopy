@@ -30,7 +30,7 @@ class ManualMessage(BaseModel):
 
 @router.get("/conversations")
 def conversations(db: Session = Depends(get_db)) -> list[dict]:
-    rows = db.scalars(select(Lead).order_by(desc(Lead.updated_at)).limit(100)).all()
+    rows = db.scalars(select(Lead).order_by(desc(Lead.updated_at))).all()
     return [
         {
             "id": row.id,
@@ -40,6 +40,7 @@ def conversations(db: Session = Depends(get_db)) -> list[dict]:
             "ai_enabled": row.ai_enabled,
             "last_message_at": row.last_message_at,
             "client": row.client.name if row.client else None,
+            "phone": row.client.phone if row.client else None,
         }
         for row in rows
     ]

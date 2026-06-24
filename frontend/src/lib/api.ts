@@ -12,6 +12,7 @@ export type Conversation = {
   ai_enabled: boolean;
   last_message_at: string | null;
   client: string | null;
+  phone: string | null;
 };
 
 export async function apiGet<T>(path: string): Promise<T> {
