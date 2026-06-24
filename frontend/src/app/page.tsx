@@ -1,6 +1,6 @@
 import { Bot, Clock, MessageSquare, Settings, Users } from "lucide-react";
 import { apiGet, Conversation } from "@/lib/api";
-import { Dashboard, LiveClockWidget, LogoutButton, UsersPanel, PromptPanel } from "@/components/dashboard";
+import { Dashboard, LiveClockWidget, LogoutButton, UsersPanel, PromptPanel, SectionShell } from "@/components/dashboard";
 
 export default async function Home() {
   const conversations = await apiGet<Conversation[]>("/admin/conversations").catch(() => []);
@@ -24,7 +24,7 @@ export default async function Home() {
 
         <nav className="nav">
           <span className="nav-section">Основное</span>
-          <a href="#dialogs" className="active">
+          <a href="#dialogs">
             <MessageSquare size={15} /> Диалоги
           </a>
           <a href="#actions">
@@ -66,9 +66,23 @@ export default async function Home() {
           </div>
         </div>
 
-        <Dashboard initialConversations={conversations} />
-        <PromptPanel />
-        <UsersPanel />
+        <SectionShell id="dialogs" title="Диалоги" icon={<MessageSquare size={14} />}>
+          <Dashboard initialConversations={conversations} />
+        </SectionShell>
+
+        <SectionShell id="ai" title="AI настройки" icon={<Bot size={14} />}>
+          <PromptPanel />
+        </SectionShell>
+
+        <SectionShell id="users" title="Пользователи CRM" icon={<Users size={14} />}>
+          <UsersPanel />
+        </SectionShell>
+
+        <SectionShell id="settings" title="Настройки" icon={<Settings size={14} />} defaultOpen={false}>
+          <div style={{ padding: "20px 24px", color: "var(--text-3)", fontSize: 13 }}>
+            Настройки системы — в разработке.
+          </div>
+        </SectionShell>
       </main>
     </div>
   );

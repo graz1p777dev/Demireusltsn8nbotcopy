@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect, useCallback } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
 import { RefreshCw, Send, Bot, User, Power, PowerOff, MessageSquare, X, ChevronDown, ChevronRight, LogOut, UserPlus, Trash2, Shield, ShieldOff } from "lucide-react";
 
 function ChannelIcon({ phone }: { phone: string | null }) {
@@ -95,6 +95,41 @@ export function LiveClockWidget() {
   );
 }
 
+/* ── Collapsible Section Shell ── */
+export function SectionShell({
+  id, title, icon, children, defaultOpen = true,
+}: {
+  id: string; title: string; icon: React.ReactNode;
+  children: React.ReactNode; defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div id={id} style={{ borderTop: "1px solid var(--border)" }}>
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "10px 20px",
+        background: "var(--bg-2)", borderBottom: open ? "1px solid var(--border)" : "none",
+        cursor: "pointer", userSelect: "none",
+      }} onClick={() => setOpen(o => !o)}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+          {icon}
+          {title}
+        </div>
+        <button
+          className="btn-ghost"
+          style={{ padding: "2px 6px" }}
+          onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+          title={open ? "Свернуть" : "Развернуть"}
+        >
+          {open ? <X size={14} /> : <ChevronDown size={14} />}
+        </button>
+      </div>
+      {open && children}
+    </div>
+  );
+}
+
+
 /* ── Main Dashboard ── */
 export function Dashboard({ initialConversations }: { initialConversations: Conversation[] }) {
   const [conversations, setConversations] = useState(initialConversations);
@@ -158,7 +193,7 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
   };
 
   return (
-    <section className="grid" id="dialogs">
+    <section className="grid">
       {/* ─── LEFT: conversation list ─── */}
       <div className="panel">
         <div className="panel-header">
@@ -443,20 +478,15 @@ export function PromptPanel() {
   }
 
   return (
-    <section id="ai" style={{ padding: "20px 24px", borderTop: "1px solid var(--border)" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: open ? 16 : 0 }}>
-        <strong style={{ fontSize: 14 }}>Промпт бота</strong>
-        {!open ? (
+    <section style={{ padding: "20px 24px" }}>
+      {!open && (
+        <div style={{ marginBottom: 0 }}>
           <button className="btn-primary" style={{ padding: "6px 12px", fontSize: 12 }}
             onClick={() => setOpen(true)}>
-            <Bot size={13} /> Редактировать
+            <Bot size={13} /> Редактировать промпт
           </button>
-        ) : (
-          <button className="btn-ghost" style={{ padding: "4px 8px" }} onClick={cancel} title="Закрыть">
-            <X size={15} />
-          </button>
-        )}
-      </div>
+        </div>
+      )}
 
       {open && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -576,9 +606,8 @@ export function UsersPanel() {
   }
 
   return (
-    <section id="users" style={{ padding: "20px 24px", borderTop: "1px solid var(--border)" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <strong style={{ fontSize: 14 }}>Пользователи CRM</strong>
+    <section style={{ padding: "20px 24px" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
         <button className="btn-primary" style={{ padding: "6px 12px", fontSize: 12 }}
           onClick={() => setShowForm(!showForm)}>
           <UserPlus size={13} /> Добавить
