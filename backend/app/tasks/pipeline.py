@@ -209,7 +209,8 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         move_lead_status(db, lead, settings.amocrm_status_primary_contact, "sales_message")
 
         slot_context = check_consultation_slots(db)
-        reply_result = generate_reply(dialogue, slot_context)
+        custom_prompt = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt"))
+        reply_result = generate_reply(dialogue, slot_context, system_prompt=custom_prompt.value if custom_prompt else None)
         reply = str(reply_result.content)
         save_ai_usage(db, lead.id, reply_result)
         log_action(

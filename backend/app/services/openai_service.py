@@ -77,7 +77,7 @@ def _clean_dialogue(dialogue: list[dict]) -> list[dict]:
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
-def generate_reply(dialogue: list[dict], slot_context: dict) -> AIResult:
+def generate_reply(dialogue: list[dict], slot_context: dict, system_prompt: str | None = None) -> AIResult:
     if not settings.openai_api_key:
         return AIResult(
             content="Здравствуйте 👋 Подскажите, пожалуйста, что сейчас беспокоит вашу кожу?",
@@ -104,7 +104,7 @@ def generate_reply(dialogue: list[dict], slot_context: dict) -> AIResult:
         model=settings.openai_model,
         temperature=0.5,
         messages=[
-            {"role": "system", "content": SALES_AGENT_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt or SALES_AGENT_SYSTEM_PROMPT},
             user_message,
         ],
     )

@@ -383,6 +383,96 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
   );
 }
 
+/* ── Prompt Panel ── */
+export function PromptPanel() {
+  const [prompt, setPrompt] = useState("");
+  const [original, setOriginal] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    apiGet<{ prompt: string }>("/admin/bot-prompt")
+      .then((d) => { setPrompt(d.prompt); setOriginal(d.prompt); })
+      .finally(() => setLoading(false));
+  }, [open]);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await apiJson("/admin/bot-prompt", "PATCH", { prompt });
+      setOriginal(prompt);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function cancel() {
+    setPrompt(original);
+    setOpen(false);
+  }
+
+  return (
+    <section id="ai" style={{ padding: "20px 24px", borderTop: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: open ? 16 : 0 }}>
+        <strong style={{ fontSize: 14 }}>Промпт бота</strong>
+        {!open ? (
+          <button className="btn-primary" style={{ padding: "6px 12px", fontSize: 12 }}
+            onClick={() => setOpen(true)}>
+            <Bot size={13} /> Редактировать
+          </button>
+        ) : (
+          <button className="btn-ghost" style={{ padding: "4px 8px" }} onClick={cancel} title="Закрыть">
+            <X size={15} />
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <p style={{ fontSize: 12, color: "var(--text-3)", margin: 0 }}>
+            Системный промпт, которым руководствуется бот при ответах клиентам.
+          </p>
+          {loading ? (
+            <div className="muted" style={{ fontSize: 13 }}>Загрузка...</div>
+          ) : (
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              rows={18}
+              style={{
+                width: "100%", background: "var(--bg-3)", border: "1px solid var(--border)",
+                color: "var(--text)", borderRadius: 8, padding: "10px 12px", fontSize: 12,
+                fontFamily: "var(--mono)", lineHeight: 1.6, resize: "vertical",
+                boxSizing: "border-box", outline: "none",
+              }}
+            />
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button className="btn-ghost" style={{ padding: "7px 14px", fontSize: 12 }} onClick={cancel}>
+              Отмена
+            </button>
+            <button
+              className="btn-primary"
+              style={{ padding: "7px 18px", fontSize: 12 }}
+              onClick={save}
+              disabled={saving || loading}
+            >
+              {saving ? "Сохранение..." : saved ? "✓ Сохранено" : "Сохранить"}
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+
 /* ── Logout Button ── */
 export function LogoutButton() {
   const router = useRouter();

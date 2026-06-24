@@ -176,3 +176,25 @@ def send_manual_message(lead_id: int, payload: ManualMessage, db: Session = Depe
 def list_settings(db: Session = Depends(get_db)) -> list[dict]:
     rows = db.scalars(select(Setting).order_by(Setting.key)).all()
     return [{"key": row.key, "value": "***" if row.is_secret else row.value, "is_secret": row.is_secret} for row in rows]
+
+
+class BotPromptUpdate(BaseModel):
+    prompt: str
+
+
+@router.get("/bot-prompt")
+def get_bot_prompt(db: Session = Depends(get_db)) -> dict:
+    from app.services.prompts import SALES_AGENT_SYSTEM_PROMPT
+    row = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt"))
+    return {"prompt": row.value if row else SALES_AGENT_SYSTEM_PROMPT}
+
+
+@router.patch("/bot-prompt")
+def update_bot_prompt(body: BotPromptUpdate, db: Session = Depends(get_db)) -> dict:
+    row = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt"))
+    if row:
+        row.value = body.prompt
+    else:
+        db.add(Setting(key="bot_system_prompt", value=body.prompt, is_secret=False))
+    db.commit()
+    return {"ok": True}
