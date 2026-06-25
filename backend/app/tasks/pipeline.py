@@ -17,7 +17,7 @@ from app.models.entities import (
     TrainingExample,
 )
 from app.services import amocrm, google_sheets, telegram
-from app.services.openai_service import AIResult, ai_edit_reply, classify_sales_intent, extract_fields, generate_reply
+from app.services.openai_service import AIResult, ai_edit_reply, classify_sales_intent, extract_fields, generate_reply, summarize_dialogue
 from app.services.slots import check_consultation_slots
 from app.tasks.celery_app import celery_app
 
@@ -158,16 +158,17 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         combined_text = " ".join(item.text for item in buffers if item.text).strip()
         conversation_id = buffers[-1].conversation_id
 
-        messages = db.scalars(
+        all_messages = db.scalars(
             select(Message)
             .where(Message.lead_id == lead.id)
-            .order_by(Message.created_at.desc())
-            .limit(10)
+            .order_by(Message.created_at.asc())
         ).all()
-        messages = list(reversed(messages))
-        dialogue = [{"role": msg.role, "content": msg.text} for msg in messages if msg.text]
-        if combined_text and (not dialogue or dialogue[-1]["content"] != combined_text):
-            dialogue.append({"role": "user", "content": combined_text})
+        full_dialogue = [{"role": m.role, "content": m.text} for m in all_messages if m.text]
+        if combined_text and (not full_dialogue or full_dialogue[-1]["content"] != combined_text):
+            full_dialogue.append({"role": "user", "content": combined_text})
+
+        # last 10 messages for reply generation (saves tokens)
+        dialogue = full_dialogue[-10:]
 
         stage = _lead_stage_snapshot(db, lead)
         if (
@@ -240,6 +241,7 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         if settings.human_approval_enabled:
             _mark_buffers_processed(db, buffers)
             stage = _lead_stage_snapshot(db, lead)
+            conv_summary = summarize_dialogue(full_dialogue) if len(full_dialogue) > 2 else ""
             approval = ApprovalRequest(
                 lead_id=lead.id,
                 chat_id=lead.chat_id or "",
@@ -250,6 +252,7 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
                 amocrm_pipeline_id=stage.get("pipeline_id"),
                 amocrm_status_id=stage.get("status_id"),
                 amocrm_stage_name=stage.get("stage_name"),
+                conversation_summary=conv_summary or None,
             )
             db.add(approval)
             db.commit()

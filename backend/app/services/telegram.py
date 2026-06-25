@@ -77,6 +77,10 @@ def approval_card(approval: ApprovalRequest, lead: Lead, decision: str | None = 
     contact = lead.client.phone if lead.client and lead.client.phone else lead.contact_id or "-"
     score = calc_score(approval.extracted_fields, messages_count)
     reply = approval.edited_reply or approval.ai_reply
+    summary_block = (
+        f"📋 <b>Контекст диалога:</b>\n{escape(approval.conversation_summary)}\n\n"
+        if approval.conversation_summary else ""
+    )
     text = (
         "🟣 <b>Новый AI-ответ</b>\n\n"
         f"👤 <b>Клиент:</b> {escape(client_name or 'Без имени')}\n"
@@ -84,7 +88,8 @@ def approval_card(approval: ApprovalRequest, lead: Lead, decision: str | None = 
         f"🧾 <b>Lead ID:</b> {escape(lead.amocrm_lead_id)}\n"
         f"📍 <b>Этап amoCRM:</b> {escape(approval.amocrm_stage_name or str(approval.amocrm_status_id or 'неизвестно'))}\n"
         f"🔥 <b>Score:</b> {score}%\n\n"
-        f'💬 <b>Сообщение клиента:</b>\n"{escape(approval.client_message)}"\n\n'
+        + summary_block
+        + f'💬 <b>Сообщение клиента:</b>\n"{escape(approval.client_message)}"\n\n'
         f"🤖 <b>Ответ бота:</b>\n{escape(reply)}\n\n"
         f"🧠 <b>Память:</b>\n{memory_lines(approval.extracted_fields)}\n\n"
         "⚙️ <b>Действия после принятия:</b>\n"
