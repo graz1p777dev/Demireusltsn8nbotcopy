@@ -118,6 +118,34 @@ def generate_reply(dialogue: list[dict], slot_context: dict, system_prompt: str 
     )
 
 
+def summarize_dialogue(dialogue: list[dict]) -> str:
+    """Generate a brief hypervisor summary of the full conversation for managers."""
+    if not dialogue:
+        return ""
+    if not settings.openai_api_key:
+        return ""
+    try:
+        text = "\n".join(
+            f"{'Клиент' if m['role'] == 'user' else 'Бот'}: {str(m.get('content', ''))[:300]}"
+            for m in dialogue
+        )
+        response = _client().chat.completions.create(
+            model=settings.openai_extractor_model,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": (
+                    "Ты — помощник менеджера. Прочитай диалог и напиши краткое резюме для менеджера в 2-3 предложениях. "
+                    "Укажи: что беспокоит клиента, на каком этапе разговор, было ли уже предложено что-то. "
+                    "Пиши по-русски, кратко и по делу."
+                )},
+                {"role": "user", "content": text},
+            ],
+        )
+        return (response.choices[0].message.content or "").strip()
+    except Exception:
+        return ""
+
+
 def _deepseek_client() -> OpenAI:
     return OpenAI(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com/v1")
 
