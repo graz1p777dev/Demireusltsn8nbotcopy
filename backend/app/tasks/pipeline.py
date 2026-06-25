@@ -161,8 +161,10 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         messages = db.scalars(
             select(Message)
             .where(Message.lead_id == lead.id)
-            .order_by(Message.created_at.asc())
+            .order_by(Message.created_at.desc())
+            .limit(10)
         ).all()
+        messages = list(reversed(messages))
         dialogue = [{"role": msg.role, "content": msg.text} for msg in messages if msg.text]
         if combined_text and (not dialogue or dialogue[-1]["content"] != combined_text):
             dialogue.append({"role": "user", "content": combined_text})
