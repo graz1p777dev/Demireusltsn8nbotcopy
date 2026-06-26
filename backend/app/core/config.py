@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     human_approval_enabled: bool = True
     telegram_bot_token: str = ""
     telegram_manager_chat_id: str = ""
+    telegram_extra_manager_chat_ids: str = ""
     telegram_allowed_manager_ids: str = ""
     telegram_webhook_secret: str = ""
     public_backend_url: str = ""

@@ -160,7 +160,7 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
                 approval.manager_telegram_id = manager_id
                 db.commit()
                 save_ai_usage(db, approval.lead_id, result)
-                telegram.edit_approval_card(approval, lead)
+                telegram.edit_approval_card(approval, lead, chat_id=callback_chat_id)
                 telegram.answer_callback(callback_id, "📅 Предложение консультации готово")
             except Exception:
                 telegram.answer_callback(callback_id, "Ошибка при генерации")
