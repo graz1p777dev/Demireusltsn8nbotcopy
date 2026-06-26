@@ -1,11 +1,14 @@
 import json as _json
 from collections import Counter, defaultdict
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import desc, func, select, text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings as app_settings
 from app.db.session import get_db
 from app.models.entities import (
     ActionLog,
@@ -13,11 +16,13 @@ from app.models.entities import (
     AIUsage,
     ApprovalRequest,
     ClientMemory,
+    ConsultationSlot,
     Lead,
     Message,
     Setting,
     TrainingExample,
 )
+from app.services.slots import day_slots, is_working_day
 from app.services import amocrm
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -342,3 +347,105 @@ def remove_manager(chat_id: str, db: Session = Depends(get_db)) -> dict:
     row.value = _json.dumps(new_managers, ensure_ascii=False)
     db.commit()
     return {"ok": True, "managers": new_managers}
+
+
+# ── Consultation Slots ───────────────────────────────────────────────────────
+
+WEEKDAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+MONTHS_RU = ["", "янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
+
+
+class SlotStatusUpdate(BaseModel):
+    status: str  # "free" | "blocked" | "booked"
+
+
+class SlotCreate(BaseModel):
+    date: str   # "YYYY-MM-DD"
+    time: str   # "HH:MM"
+    status: str = "blocked"
+
+
+@router.get("/slots")
+def get_slots(days: int = 21, db: Session = Depends(get_db)) -> dict:
+    tz = ZoneInfo(app_settings.timezone)
+    today = datetime.now(tz).date()
+
+    dates: list[date] = [today + timedelta(days=i) for i in range(days)]
+
+    # Fetch all DB slots for this range
+    db_slots = db.scalars(
+        select(ConsultationSlot).where(
+            ConsultationSlot.date >= dates[0],
+            ConsultationSlot.date <= dates[-1],
+        )
+    ).all()
+    slot_map: dict[tuple[date, str], ConsultationSlot] = {
+        (s.date, s.time.strftime("%H:%M")): s for s in db_slots
+    }
+
+    schedule = []
+    for day in dates:
+        times = day_slots(day)
+        working = is_working_day(day)
+        slots = []
+        for t in times:
+            db_slot = slot_map.get((day, t))
+            slots.append({
+                "time": t,
+                "status": db_slot.status if db_slot else "free",
+                "id": db_slot.id if db_slot else None,
+                "lead_id": db_slot.lead_id if db_slot else None,
+            })
+        schedule.append({
+            "date": day.isoformat(),
+            "label": f"{WEEKDAYS_RU[day.weekday()]} {day.day} {MONTHS_RU[day.month]}",
+            "is_working": working,
+            "slots": slots,
+        })
+
+    return {"schedule": schedule, "interval_minutes": app_settings.consultation_interval_minutes}
+
+
+@router.post("/slots")
+def create_slot(body: SlotCreate, db: Session = Depends(get_db)) -> dict:
+    try:
+        d = date.fromisoformat(body.date)
+        t = time.fromisoformat(body.time)
+    except ValueError:
+        raise HTTPException(400, "Invalid date or time format")
+
+    existing = db.scalar(
+        select(ConsultationSlot).where(
+            ConsultationSlot.date == d,
+            ConsultationSlot.time == t,
+        )
+    )
+    if existing:
+        existing.status = body.status
+        db.commit()
+        return {"ok": True, "slot": {"id": existing.id, "status": existing.status}}
+
+    slot = ConsultationSlot(date=d, time=t, status=body.status)
+    db.add(slot)
+    db.commit()
+    return {"ok": True, "slot": {"id": slot.id, "status": slot.status}}
+
+
+@router.patch("/slots/{slot_id}")
+def update_slot(slot_id: int, body: SlotStatusUpdate, db: Session = Depends(get_db)) -> dict:
+    slot = db.get(ConsultationSlot, slot_id)
+    if not slot:
+        raise HTTPException(404, "Slot not found")
+    slot.status = body.status
+    db.commit()
+    return {"ok": True, "slot": {"id": slot.id, "status": slot.status}}
+
+
+@router.delete("/slots/{slot_id}")
+def delete_slot(slot_id: int, db: Session = Depends(get_db)) -> dict:
+    slot = db.get(ConsultationSlot, slot_id)
+    if not slot:
+        raise HTTPException(404, "Slot not found")
+    db.delete(slot)
+    db.commit()
+    return {"ok": True}
