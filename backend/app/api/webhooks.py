@@ -4,7 +4,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.models.entities import ApprovalRequest, Lead
+import json as _json
+
+from app.models.entities import ApprovalRequest, Lead, Setting
 from app.schemas.amocrm import parse_amocrm_webhook
 from app.services import amocrm, telegram
 from app.services.repository import upsert_incoming
@@ -22,6 +24,16 @@ from app.tasks.pipeline import (
 )
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+
+
+def _load_db_manager_ids(db) -> set[str]:
+    try:
+        row = db.scalar(select(Setting).where(Setting.key == "telegram_managers"))
+        if not row or not row.value:
+            return set()
+        return {str(m["chat_id"]) for m in _json.loads(row.value) if m.get("chat_id")}
+    except Exception:
+        return set()
 
 
 @router.post("/amocrm")
@@ -59,7 +71,8 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
         callback_id = callback["id"]
         manager_id = str(callback["from"]["id"])
         callback_chat_id = str(callback.get("message", {}).get("chat", {}).get("id", ""))
-        if not telegram.is_authorized_manager(manager_id, callback_chat_id):
+        db_manager_ids = _load_db_manager_ids(db)
+        if not telegram.is_authorized_manager(manager_id, callback_chat_id, extra_allowed=db_manager_ids):
             telegram.answer_callback(callback_id, "Нет доступа")
             return {"ok": False, "error": "unauthorized_manager"}
         data = callback.get("data", "")
@@ -173,7 +186,8 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
         manager_id = str(message.get("from", {}).get("id", ""))
         message_chat_id = str(message.get("chat", {}).get("id", ""))
         text = message.get("text", "").strip()
-        if not telegram.is_authorized_manager(manager_id, message_chat_id):
+        db_manager_ids = _load_db_manager_ids(db)
+        if not telegram.is_authorized_manager(manager_id, message_chat_id, extra_allowed=db_manager_ids):
             return {"ok": False, "error": "unauthorized_manager"}
         if text in {"/no-sorted", "/nosorted", "/unsorted"}:
             approvals = db.scalars(

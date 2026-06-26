@@ -146,6 +146,48 @@ def summarize_dialogue(dialogue: list[dict]) -> str:
         return ""
 
 
+def _is_russian(text: str) -> bool:
+    """True if >40% of alphabetic chars are Cyrillic."""
+    alpha = [c for c in text if c.isalpha()]
+    if not alpha:
+        return True
+    cyrillic = sum(1 for c in alpha if "Ѐ" <= c <= "ӿ")
+    return cyrillic / len(alpha) >= 0.4
+
+
+def detect_and_translate(client_message: str, ai_reply: str) -> dict[str, str | None]:
+    """If client message is not Russian, return Russian translations of both texts."""
+    if _is_russian(client_message):
+        return {"client_translation": None, "ai_reply_translation": None}
+    if not settings.openai_api_key:
+        return {"client_translation": None, "ai_reply_translation": None}
+    try:
+        response = _client().chat.completions.create(
+            model=settings.openai_extractor_model,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": (
+                    "Переведи оба текста на русский язык. "
+                    "Ответь строго в формате JSON: "
+                    "{\"client\": \"перевод сообщения клиента\", \"reply\": \"перевод ответа бота\"}. "
+                    "Никакого лишнего текста."
+                )},
+                {"role": "user", "content": (
+                    f"Сообщение клиента:\n{client_message[:600]}\n\n"
+                    f"Ответ бота:\n{ai_reply[:600]}"
+                )},
+            ],
+        )
+        raw = (response.choices[0].message.content or "").strip()
+        data = json.loads(raw)
+        return {
+            "client_translation": str(data.get("client", "")).strip() or None,
+            "ai_reply_translation": str(data.get("reply", "")).strip() or None,
+        }
+    except Exception:
+        return {"client_translation": None, "ai_reply_translation": None}
+
+
 def _deepseek_client() -> OpenAI:
     return OpenAI(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com/v1")
 

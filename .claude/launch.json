@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "holi-korea",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "3456", "--directory", "/Users/graz1p/Desktop/holi-korea"],
+      "port": 3456
+    },
+    {
+      "name": "jewelry-studio",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "3457", "--directory", "/Users/graz1p/Desktop/Demi Results n8n copy project/jewelry-studio"],
+      "port": 3457
+    },
+    {
+      "name": "portfolio",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "3458", "--directory", "/Users/graz1p/Desktop/PortfolioAlihan"],
+      "port": 3458
+    }
+  ]
+}

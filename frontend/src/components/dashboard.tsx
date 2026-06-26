@@ -701,3 +701,113 @@ export function UsersPanel() {
     </section>
   );
 }
+
+/* ── Telegram Managers Panel ── */
+type TgManager = { name: string; chat_id: string };
+
+export function ManagersPanel() {
+  const [managers, setManagers] = useState<TgManager[]>([]);
+  const [name, setName] = useState("");
+  const [chatId, setChatId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    apiGet<TgManager[]>("/admin/managers")
+      .then(setManagers)
+      .catch(() => setManagers([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const add = async () => {
+    if (!name.trim() || !chatId.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await apiJson<{ ok: boolean; managers: TgManager[] }>(
+        "/admin/managers", "POST", { name: name.trim(), chat_id: chatId.trim() }
+      );
+      setManagers(res.managers);
+      setName(""); setChatId("");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Ошибка");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (m: TgManager) => {
+    if (!confirm(`Удалить менеджера ${m.name}?`)) return;
+    try {
+      const res = await apiJson<{ ok: boolean; managers: TgManager[] }>(
+        `/admin/managers/${encodeURIComponent(m.chat_id)}`, "DELETE"
+      );
+      setManagers(res.managers);
+    } catch {
+      setError("Ошибка удаления");
+    }
+  };
+
+  return (
+    <section style={{ padding: "16px 20px" }}>
+      <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 14 }}>
+        Менеджеры получают Telegram-карточки с запросами на одобрение ответов бота.
+        Для добавления менеджер должен написать боту хотя бы одно сообщение.
+      </p>
+
+      {/* Add form */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+        <input
+          className="input"
+          placeholder="Имя менеджера"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          style={{ flex: "1 1 140px", minWidth: 0 }}
+        />
+        <input
+          className="input"
+          placeholder="Telegram Chat ID"
+          value={chatId}
+          onChange={e => setChatId(e.target.value)}
+          style={{ flex: "1 1 140px", minWidth: 0 }}
+        />
+        <button className="btn-primary" onClick={add} disabled={saving || !name.trim() || !chatId.trim()}
+          style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <UserPlus size={14} /> Добавить
+        </button>
+      </div>
+      {error && <div style={{ color: "var(--danger)", fontSize: 12, marginBottom: 10 }}>{error}</div>}
+
+      {loading ? (
+        <div style={{ color: "var(--text-3)", fontSize: 13 }}>Загрузка...</div>
+      ) : managers.length === 0 ? (
+        <div style={{ color: "var(--text-3)", fontSize: 13 }}>
+          Нет менеджеров из БД. Основные заданы через переменные окружения Railway.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {managers.map(m => (
+            <div key={m.chat_id} style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "8px 12px", background: "var(--bg-3)", borderRadius: 8,
+              border: "1px solid var(--border)",
+            }}>
+              <div style={{ flex: 1 }}>
+                <span style={{ fontWeight: 600, fontSize: 13 }}>{m.name}</span>
+                <span style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--text-3)", marginLeft: 8 }}>
+                  {m.chat_id}
+                </span>
+              </div>
+              <button className="btn-danger" style={{ padding: "4px 8px" }} onClick={() => remove(m)} title="Удалить">
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
