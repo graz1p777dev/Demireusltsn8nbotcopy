@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { Bot, MessageSquare, Settings } from "lucide-react";
+import { BarChart2, Bot, MessageSquare, Settings } from "lucide-react";
 import { LiveClockWidget, LogoutButton } from "@/components/dashboard";
 
 export function AppShell({ children, title, subtitle }: {
@@ -35,6 +35,9 @@ export function AppShell({ children, title, subtitle }: {
             <MessageSquare size={15} /> Диалоги
           </Link>
           <span className="nav-section">Администрирование</span>
+          <Link href="/analytics" className={path === "/analytics" ? "active" : ""}>
+            <BarChart2 size={15} /> Аналитика
+          </Link>
           <Link href="/settings" className={path === "/settings" ? "active" : ""}>
             <Settings size={15} /> Настройки
           </Link>
