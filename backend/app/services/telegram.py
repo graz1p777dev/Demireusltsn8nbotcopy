@@ -33,6 +33,15 @@ def telegram_enabled() -> bool:
     return bool(settings.telegram_bot_token and settings.telegram_manager_chat_id)
 
 
+def _all_manager_chat_ids() -> list[str]:
+    ids = [settings.telegram_manager_chat_id] if settings.telegram_manager_chat_id else []
+    for item in settings.telegram_extra_manager_chat_ids.split(","):
+        item = item.strip()
+        if item and item not in ids:
+            ids.append(item)
+    return ids
+
+
 def allowed_manager_ids() -> set[str]:
     return {
         item.strip()
@@ -173,30 +182,42 @@ def delete_message(chat_id: str | int, message_id: int) -> None:
 def send_approval_card(approval: ApprovalRequest, lead: Lead, messages_count: int = 1) -> dict:
     if not telegram_enabled():
         return {"skipped": True, "reason": "telegram not configured"}
+    card_text = approval_card(approval, lead, messages_count=messages_count)
+    keyboard = approval_keyboard(approval.id, lead)
+    last_response: dict = {}
     with httpx.Client(timeout=20) as client:
-        response = client.post(
-            _api_url("sendMessage"),
-            json={
-                "chat_id": settings.telegram_manager_chat_id,
-                "text": approval_card(approval, lead, messages_count=messages_count),
-                "parse_mode": "HTML",
-                "reply_markup": approval_keyboard(approval.id, lead),
-                "disable_web_page_preview": True,
-            },
-        )
-        response.raise_for_status()
-        return response.json()
+        for chat_id in _all_manager_chat_ids():
+            resp = client.post(
+                _api_url("sendMessage"),
+                json={
+                    "chat_id": chat_id,
+                    "text": card_text,
+                    "parse_mode": "HTML",
+                    "reply_markup": keyboard,
+                    "disable_web_page_preview": True,
+                },
+            )
+            if resp.is_success:
+                last_response = resp.json()
+    return last_response
 
 
-def edit_approval_card(approval: ApprovalRequest, lead: Lead, decision: str | None = None, messages_count: int = 1) -> dict:
+def edit_approval_card(
+    approval: ApprovalRequest,
+    lead: Lead,
+    decision: str | None = None,
+    messages_count: int = 1,
+    chat_id: str | None = None,
+) -> dict:
     if not telegram_enabled() or not approval.telegram_message_id:
         return {"skipped": True}
+    target_chat = chat_id or settings.telegram_manager_chat_id
     keyboard = approval_keyboard(approval.id, lead) if not decision else None
     with httpx.Client(timeout=20) as client:
         response = client.post(
             _api_url("editMessageText"),
             json={
-                "chat_id": settings.telegram_manager_chat_id,
+                "chat_id": target_chat,
                 "message_id": approval.telegram_message_id,
                 "text": approval_card(approval, lead, decision=decision, messages_count=messages_count),
                 "parse_mode": "HTML",
