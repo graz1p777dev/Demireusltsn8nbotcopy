@@ -1,3 +1,4 @@
+import json as _json
 from collections import Counter, defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -243,9 +244,25 @@ def get_analytics(db: Session = Depends(get_db)) -> dict:
         select(func.count()).select_from(ApprovalRequest)
         .where(ApprovalRequest.status == "approved")
     ) or 0
+    # Approved without editing (ai_reply sent as-is)
+    approved_as_is = db.scalar(
+        select(func.count()).select_from(ApprovalRequest)
+        .where(ApprovalRequest.status == "approved")
+        .where(ApprovalRequest.edited_reply.is_(None))
+    ) or 0
+    rejected = db.scalar(
+        select(func.count()).select_from(ApprovalRequest)
+        .where(ApprovalRequest.status == "rejected")
+    ) or 0
     consultation_confirmed = db.scalar(text(
         "SELECT COUNT(*) FROM ai_extracted_fields WHERE consultation_confirmed = true"
     )) or 0
+
+    # Token usage & cost
+    token_row = db.execute(text(
+        "SELECT COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
+        "COALESCE(SUM(total_tokens),0), COALESCE(SUM(total_cost),0) FROM ai_usage"
+    )).one()
 
     return {
         "hourly": hourly_full,
@@ -256,6 +273,72 @@ def get_analytics(db: Session = Depends(get_db)) -> dict:
             "total_messages": total_messages,
             "total_approvals": total_approvals,
             "approved": approved,
+            "approved_as_is": int(approved_as_is),
+            "rejected": int(rejected),
             "consultation_confirmed": int(consultation_confirmed),
+            "prompt_tokens": int(token_row[0]),
+            "completion_tokens": int(token_row[1]),
+            "total_tokens": int(token_row[2]),
+            "total_cost": float(token_row[3]),
         },
     }
+
+
+# ── Managers ────────────────────────────────────────────────────────────────
+
+class ManagerPayload(BaseModel):
+    name: str
+    chat_id: str
+
+
+def _get_managers_setting(db: Session):
+    return db.scalar(select(Setting).where(Setting.key == "telegram_managers"))
+
+
+@router.get("/managers")
+def list_managers(db: Session = Depends(get_db)) -> list[dict]:
+    row = _get_managers_setting(db)
+    if not row or not row.value:
+        return []
+    try:
+        return _json.loads(row.value)
+    except Exception:
+        return []
+
+
+@router.post("/managers")
+def add_manager(payload: ManagerPayload, db: Session = Depends(get_db)) -> dict:
+    row = _get_managers_setting(db)
+    managers: list[dict] = []
+    if row and row.value:
+        try:
+            managers = _json.loads(row.value)
+        except Exception:
+            managers = []
+    # Deduplicate by chat_id
+    if any(m["chat_id"] == payload.chat_id for m in managers):
+        raise HTTPException(400, "Manager with this chat_id already exists")
+    managers.append({"name": payload.name, "chat_id": payload.chat_id})
+    if row:
+        row.value = _json.dumps(managers, ensure_ascii=False)
+    else:
+        db.add(Setting(key="telegram_managers", value=_json.dumps(managers, ensure_ascii=False), is_secret=False))
+    db.commit()
+    return {"ok": True, "managers": managers}
+
+
+@router.delete("/managers/{chat_id}")
+def remove_manager(chat_id: str, db: Session = Depends(get_db)) -> dict:
+    row = _get_managers_setting(db)
+    if not row or not row.value:
+        raise HTTPException(404, "Manager not found")
+    try:
+        managers = _json.loads(row.value)
+    except Exception:
+        managers = []
+    new_managers = [m for m in managers if m["chat_id"] != chat_id]
+    if len(new_managers) == len(managers):
+        raise HTTPException(404, "Manager not found")
+    row.value = _json.dumps(new_managers, ensure_ascii=False)
+    db.commit()
+    return {"ok": True, "managers": new_managers}

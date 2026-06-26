@@ -13,7 +13,13 @@ type Analytics = {
     total_messages: number;
     total_approvals: number;
     approved: number;
+    approved_as_is: number;
+    rejected: number;
     consultation_confirmed: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    total_cost: number;
   };
 };
 
@@ -63,22 +69,42 @@ export default function AnalyticsPage() {
           <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
 
             {/* Stats row */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10 }}>
               {[
                 { label: "Лидов", value: data.stats.total_leads, color: "#2563EB" },
                 { label: "Сообщений", value: data.stats.total_messages, color: "#7C3AED" },
                 { label: "AI ответов", value: data.stats.total_approvals, color: "#059669" },
-                { label: "Одобрено", value: data.stats.approved, color: "#D97706" },
+                { label: "Принято", value: data.stats.approved, color: "#D97706" },
+                { label: "Без правок", value: data.stats.approved_as_is, color: "#0891B2" },
+                { label: "Отклонено", value: data.stats.rejected, color: "#DC2626" },
                 { label: "Записей", value: data.stats.consultation_confirmed, color: "#DB2777" },
               ].map(s => (
                 <div key={s.label} style={{
                   background: "var(--bg-2)", border: "1px solid var(--border)",
-                  borderRadius: 12, padding: "16px 18px",
+                  borderRadius: 12, padding: "14px 16px",
                 }}>
-                  <div style={{ fontSize: 24, fontWeight: 700, color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: s.color }}>{s.value}</div>
                   <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 3 }}>{s.label}</div>
                 </div>
               ))}
+            </div>
+
+            {/* Token usage */}
+            <div style={{ background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "18px 20px" }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 12 }}>Расход токенов ИИ</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+                {[
+                  { label: "Входящих токенов", value: data.stats.prompt_tokens.toLocaleString(), color: "#7C3AED" },
+                  { label: "Исходящих токенов", value: data.stats.completion_tokens.toLocaleString(), color: "#2563EB" },
+                  { label: "Всего токенов", value: data.stats.total_tokens.toLocaleString(), color: "#059669" },
+                  { label: "Потрачено (USD)", value: `$${data.stats.total_cost.toFixed(4)}`, color: "#D97706" },
+                ].map(s => (
+                  <div key={s.label} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: s.color }}>{s.value}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-3)" }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>

@@ -53,12 +53,16 @@ def _parse_message_ids(telegram_message_id: str | None) -> list[tuple[str, str]]
     return []
 
 
-def _all_manager_chat_ids() -> list[str]:
+def _all_manager_chat_ids(extra: list[str] | None = None) -> list[str]:
     ids = [settings.telegram_manager_chat_id] if settings.telegram_manager_chat_id else []
     for item in settings.telegram_extra_manager_chat_ids.split(","):
         item = item.strip()
         if item and item not in ids:
             ids.append(item)
+    if extra:
+        for item in extra:
+            if item and item not in ids:
+                ids.append(item)
     return ids
 
 
@@ -70,8 +74,10 @@ def allowed_manager_ids() -> set[str]:
     }
 
 
-def is_authorized_manager(manager_id: str, chat_id: str | None = None) -> bool:
+def is_authorized_manager(manager_id: str, chat_id: str | None = None, extra_allowed: set[str] | None = None) -> bool:
     allowed_ids = allowed_manager_ids()
+    if extra_allowed:
+        allowed_ids = allowed_ids | extra_allowed
     if allowed_ids:
         return manager_id in allowed_ids
     if chat_id and str(chat_id) == str(settings.telegram_manager_chat_id):
@@ -110,6 +116,14 @@ def approval_card(approval: ApprovalRequest, lead: Lead, decision: str | None = 
         f"📋 <b>Контекст диалога:</b>\n{escape(approval.conversation_summary)}\n\n"
         if approval.conversation_summary else ""
     )
+    translation_block = ""
+    if approval.client_message_translation or approval.ai_reply_translation:
+        translation_block = "🌐 <b>Перевод:</b>\n"
+        if approval.client_message_translation:
+            translation_block += f"<i>Клиент:</i> {escape(approval.client_message_translation)}\n"
+        if approval.ai_reply_translation:
+            translation_block += f"<i>Ответ ИИ:</i> {escape(approval.ai_reply_translation)}\n"
+        translation_block += "\n"
     text = (
         "🟣 <b>Новый AI-ответ</b>\n\n"
         f"👤 <b>Клиент:</b> {escape(client_name or 'Без имени')}\n"
@@ -119,7 +133,8 @@ def approval_card(approval: ApprovalRequest, lead: Lead, decision: str | None = 
         f"🔥 <b>Score:</b> {score}%\n\n"
         + summary_block
         + f'💬 <b>Сообщение клиента:</b>\n"{escape(approval.client_message)}"\n\n'
-        f"🤖 <b>Ответ бота:</b>\n{escape(reply)}\n\n"
+        + translation_block
+        + f"🤖 <b>Ответ бота:</b>\n{escape(reply)}\n\n"
         f"🧠 <b>Память:</b>\n{memory_lines(approval.extracted_fields)}\n\n"
         "⚙️ <b>Действия после принятия:</b>\n"
         "- отправить ответ в amoCRM\n"
@@ -199,7 +214,7 @@ def delete_message(chat_id: str | int, message_id: int) -> None:
         client.post(_api_url("deleteMessage"), json={"chat_id": chat_id, "message_id": message_id})
 
 
-def send_approval_card(approval: ApprovalRequest, lead: Lead, messages_count: int = 1) -> dict:
+def send_approval_card(approval: ApprovalRequest, lead: Lead, messages_count: int = 1, extra_chat_ids: list[str] | None = None) -> dict:
     if not telegram_enabled():
         return {"skipped": True, "reason": "telegram not configured"}
     card_text = approval_card(approval, lead, messages_count=messages_count)
@@ -207,7 +222,7 @@ def send_approval_card(approval: ApprovalRequest, lead: Lead, messages_count: in
     message_ids: dict[str, str] = {}
     last_response: dict = {}
     with httpx.Client(timeout=20) as client:
-        for chat_id in _all_manager_chat_ids():
+        for chat_id in _all_manager_chat_ids(extra_chat_ids):
             try:
                 resp = client.post(
                     _api_url("sendMessage"),

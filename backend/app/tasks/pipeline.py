@@ -17,7 +17,7 @@ from app.models.entities import (
     TrainingExample,
 )
 from app.services import amocrm, google_sheets, telegram
-from app.services.openai_service import AIResult, ai_edit_reply, classify_sales_intent, extract_fields, generate_reply, summarize_dialogue
+from app.services.openai_service import AIResult, ai_edit_reply, classify_sales_intent, detect_and_translate, extract_fields, generate_reply, summarize_dialogue
 from app.services.slots import check_consultation_slots
 from app.tasks.celery_app import celery_app
 
@@ -100,6 +100,19 @@ def _mark_buffers_processed(db, buffers: list[MessageBuffer]) -> None:
     for item in buffers:
         item.processed = True
     db.commit()
+
+
+def _load_extra_manager_ids(db) -> list[str]:
+    """Return chat IDs of managers stored in settings table."""
+    try:
+        row = db.scalar(select(Setting).where(Setting.key == "telegram_managers"))
+        if not row or not row.value:
+            return []
+        import json as _json
+        managers = _json.loads(row.value)
+        return [str(m["chat_id"]) for m in managers if m.get("chat_id")]
+    except Exception:
+        return []
 
 
 def _has_card_data(extracted: dict) -> bool:
@@ -242,6 +255,8 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
             _mark_buffers_processed(db, buffers)
             stage = _lead_stage_snapshot(db, lead)
             conv_summary = summarize_dialogue(full_dialogue) if len(full_dialogue) > 2 else ""
+            translations = detect_and_translate(combined_text, reply)
+            extra_managers = _load_extra_manager_ids(db)
             approval = ApprovalRequest(
                 lead_id=lead.id,
                 chat_id=lead.chat_id or "",
@@ -253,11 +268,15 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
                 amocrm_status_id=stage.get("status_id"),
                 amocrm_stage_name=stage.get("stage_name"),
                 conversation_summary=conv_summary or None,
+                client_message_translation=translations["client_translation"],
+                ai_reply_translation=translations["ai_reply_translation"],
             )
             db.add(approval)
             db.commit()
             try:
-                response = telegram.send_approval_card(approval, lead, messages_count=len(dialogue))
+                response = telegram.send_approval_card(
+                    approval, lead, messages_count=len(dialogue), extra_chat_ids=extra_managers
+                )
                 message_ids_json = response.get("_message_ids")
                 if message_ids_json:
                     approval.telegram_message_id = message_ids_json
