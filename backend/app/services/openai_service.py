@@ -88,7 +88,30 @@ def generate_reply(dialogue: list[dict], slot_context: dict, system_prompt: str 
 
     image_urls = _extract_image_urls(dialogue)
     cleaned = _clean_dialogue(dialogue)
-    context_text = json.dumps(
+
+    # Build time-aware header injected into every request regardless of system prompt
+    now_bk = slot_context.get("now_bishkek", "")
+    is_working = slot_context.get("is_working_hours", True)
+    hour = int(now_bk.split(":")[0]) if now_bk and ":" in now_bk else -1
+    if hour < 0:
+        greeting_word = "Здравствуйте"
+    elif 6 <= hour < 12:
+        greeting_word = "Доброе утро"
+    elif 12 <= hour < 18:
+        greeting_word = "Добрый день"
+    elif 18 <= hour < 22:
+        greeting_word = "Добрый вечер"
+    else:
+        greeting_word = "Доброй ночи"
+
+    time_note = f"[СИСТЕМНОЕ ВРЕМЯ БИШКЕК: {now_bk} {slot_context.get('date_bishkek', '')}]\n"
+    time_note += f"[ПРАВИЛЬНОЕ ПРИВЕТСТВИЕ ДЛЯ ПЕРВОГО СООБЩЕНИЯ: «{greeting_word}»]\n"
+    if not is_working:
+        time_note += "[НЕРАБОЧЕЕ ВРЕМЯ. ОБЯЗАТЕЛЬНО: в начале ответа сообщи что магазин работает с 10:00 до 21:00. НЕ предлагай запись на консультацию.]\n"
+        # Clear free slots so model cannot offer a specific time
+        slot_context = {**slot_context, "free_slots": []}
+
+    context_text = time_note + json.dumps(
         {"dialogue": cleaned, "check_consultation_slots": slot_context},
         ensure_ascii=False,
     )
