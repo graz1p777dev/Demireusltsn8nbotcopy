@@ -1,6 +1,8 @@
+from collections import Counter, defaultdict
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, text
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -199,3 +201,61 @@ def update_bot_prompt(body: BotPromptUpdate, db: Session = Depends(get_db)) -> d
         db.add(Setting(key="bot_system_prompt", value=body.prompt, is_secret=False))
     db.commit()
     return {"ok": True}
+
+
+@router.get("/analytics")
+def get_analytics(db: Session = Depends(get_db)) -> dict:
+    # Hourly distribution of client messages (Bishkek UTC+6)
+    hourly_rows = db.execute(text(
+        "SELECT EXTRACT(HOUR FROM created_at AT TIME ZONE 'Asia/Bishkek') AS hour, COUNT(*) "
+        "FROM messages WHERE role='user' GROUP BY hour ORDER BY hour"
+    )).fetchall()
+    hourly = {int(r[0]): int(r[1]) for r in hourly_rows}
+    hourly_full = [{"hour": h, "count": hourly.get(h, 0)} for h in range(24)]
+
+    # Daily message volume (last 30 days)
+    daily_rows = db.execute(text(
+        "SELECT DATE(created_at AT TIME ZONE 'Asia/Bishkek') AS day, COUNT(*) "
+        "FROM messages WHERE role='user' AND created_at >= NOW() - INTERVAL '30 days' "
+        "GROUP BY day ORDER BY day"
+    )).fetchall()
+    daily = [{"date": str(r[0]), "count": int(r[1])} for r in daily_rows]
+
+    # Top problems from extracted fields
+    extracted_rows = db.execute(text(
+        "SELECT skin_problem FROM ai_extracted_fields WHERE skin_problem IS NOT NULL AND skin_problem != '[]'"
+    )).fetchall()
+    problem_counter: Counter = Counter()
+    for row in extracted_rows:
+        problems = row[0] if isinstance(row[0], list) else []
+        for p in problems:
+            if p:
+                problem_counter[p] += 1
+    top_problems = [{"problem": k, "count": v} for k, v in problem_counter.most_common(12)]
+
+    # Summary stats
+    total_leads = db.scalar(select(func.count()).select_from(Lead)) or 0
+    total_messages = db.scalar(
+        select(func.count()).select_from(Message).where(Message.role == "user")
+    ) or 0
+    total_approvals = db.scalar(select(func.count()).select_from(ApprovalRequest)) or 0
+    approved = db.scalar(
+        select(func.count()).select_from(ApprovalRequest)
+        .where(ApprovalRequest.status == "approved")
+    ) or 0
+    consultation_confirmed = db.scalar(text(
+        "SELECT COUNT(*) FROM ai_extracted_fields WHERE consultation_confirmed = true"
+    )) or 0
+
+    return {
+        "hourly": hourly_full,
+        "daily": daily,
+        "top_problems": top_problems,
+        "stats": {
+            "total_leads": total_leads,
+            "total_messages": total_messages,
+            "total_approvals": total_approvals,
+            "approved": approved,
+            "consultation_confirmed": int(consultation_confirmed),
+        },
+    }
