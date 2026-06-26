@@ -258,9 +258,9 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
             db.commit()
             try:
                 response = telegram.send_approval_card(approval, lead, messages_count=len(dialogue))
-                message_id = response.get("result", {}).get("message_id")
-                if message_id:
-                    approval.telegram_message_id = str(message_id)
+                message_ids_json = response.get("_message_ids")
+                if message_ids_json:
+                    approval.telegram_message_id = message_ids_json
                 log_action(db, lead.id, "telegram.approval_request", "success", response=response)
             except Exception as exc:
                 approval.status = "failed"

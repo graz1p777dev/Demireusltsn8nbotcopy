@@ -1,3 +1,5 @@
+import json
+import logging
 from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
@@ -6,6 +8,8 @@ import httpx
 
 from app.core.config import settings
 from app.models.entities import ApprovalRequest, Lead
+
+_log = logging.getLogger(__name__)
 
 
 def calc_score(extracted: dict | None, messages_count: int = 1) -> int:
@@ -31,6 +35,22 @@ def calc_score(extracted: dict | None, messages_count: int = 1) -> int:
 
 def telegram_enabled() -> bool:
     return bool(settings.telegram_bot_token and settings.telegram_manager_chat_id)
+
+
+def _parse_message_ids(telegram_message_id: str | None) -> list[tuple[str, str]]:
+    """Return list of (chat_id, message_id) from stored telegram_message_id (JSON or legacy plain id)."""
+    if not telegram_message_id:
+        return []
+    try:
+        data = json.loads(telegram_message_id)
+        if isinstance(data, dict):
+            return [(chat_id, str(mid)) for chat_id, mid in data.items()]
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Legacy: plain message_id string, assume primary chat
+    if settings.telegram_manager_chat_id:
+        return [(settings.telegram_manager_chat_id, telegram_message_id)]
+    return []
 
 
 def _all_manager_chat_ids() -> list[str]:
@@ -184,6 +204,7 @@ def send_approval_card(approval: ApprovalRequest, lead: Lead, messages_count: in
         return {"skipped": True, "reason": "telegram not configured"}
     card_text = approval_card(approval, lead, messages_count=messages_count)
     keyboard = approval_keyboard(approval.id, lead)
+    message_ids: dict[str, str] = {}
     last_response: dict = {}
     with httpx.Client(timeout=20) as client:
         for chat_id in _all_manager_chat_ids():
@@ -199,16 +220,17 @@ def send_approval_card(approval: ApprovalRequest, lead: Lead, messages_count: in
                     },
                 )
                 if resp.is_success:
-                    last_response = resp.json()
+                    data = resp.json()
+                    mid = data.get("result", {}).get("message_id")
+                    if mid:
+                        message_ids[chat_id] = str(mid)
+                    last_response = data
                 else:
-                    import logging
-                    logging.getLogger(__name__).error(
-                        "telegram send failed chat_id=%s status=%s body=%s",
-                        chat_id, resp.status_code, resp.text[:300],
-                    )
+                    _log.error("telegram send failed chat_id=%s status=%s body=%s",
+                               chat_id, resp.status_code, resp.text[:300])
             except Exception as exc:
-                import logging
-                logging.getLogger(__name__).error("telegram send error chat_id=%s: %s", chat_id, exc)
+                _log.error("telegram send error chat_id=%s: %s", chat_id, exc)
+    last_response["_message_ids"] = json.dumps(message_ids)
     return last_response
 
 
@@ -221,22 +243,34 @@ def edit_approval_card(
 ) -> dict:
     if not telegram_enabled() or not approval.telegram_message_id:
         return {"skipped": True}
-    target_chat = chat_id or settings.telegram_manager_chat_id
+    pairs = _parse_message_ids(approval.telegram_message_id)
+    if not pairs:
+        return {"skipped": True}
     keyboard = approval_keyboard(approval.id, lead) if not decision else None
+    card_text = approval_card(approval, lead, decision=decision, messages_count=messages_count)
+    last_response: dict = {}
     with httpx.Client(timeout=20) as client:
-        response = client.post(
-            _api_url("editMessageText"),
-            json={
-                "chat_id": target_chat,
-                "message_id": approval.telegram_message_id,
-                "text": approval_card(approval, lead, decision=decision, messages_count=messages_count),
-                "parse_mode": "HTML",
-                **({"reply_markup": keyboard} if keyboard else {"reply_markup": {"inline_keyboard": []}}),
-                "disable_web_page_preview": True,
-            },
-        )
-        response.raise_for_status()
-        return response.json()
+        for target_chat, message_id in pairs:
+            try:
+                resp = client.post(
+                    _api_url("editMessageText"),
+                    json={
+                        "chat_id": target_chat,
+                        "message_id": int(message_id),
+                        "text": card_text,
+                        "parse_mode": "HTML",
+                        **({"reply_markup": keyboard} if keyboard else {"reply_markup": {"inline_keyboard": []}}),
+                        "disable_web_page_preview": True,
+                    },
+                )
+                if resp.is_success:
+                    last_response = resp.json()
+                else:
+                    _log.error("telegram edit failed chat_id=%s status=%s body=%s",
+                               target_chat, resp.status_code, resp.text[:300])
+            except Exception as exc:
+                _log.error("telegram edit error chat_id=%s: %s", target_chat, exc)
+    return last_response
 
 
 def send_text(chat_id: str | int, text: str) -> dict:
