@@ -187,18 +187,28 @@ def send_approval_card(approval: ApprovalRequest, lead: Lead, messages_count: in
     last_response: dict = {}
     with httpx.Client(timeout=20) as client:
         for chat_id in _all_manager_chat_ids():
-            resp = client.post(
-                _api_url("sendMessage"),
-                json={
-                    "chat_id": chat_id,
-                    "text": card_text,
-                    "parse_mode": "HTML",
-                    "reply_markup": keyboard,
-                    "disable_web_page_preview": True,
-                },
-            )
-            if resp.is_success:
-                last_response = resp.json()
+            try:
+                resp = client.post(
+                    _api_url("sendMessage"),
+                    json={
+                        "chat_id": chat_id,
+                        "text": card_text,
+                        "parse_mode": "HTML",
+                        "reply_markup": keyboard,
+                        "disable_web_page_preview": True,
+                    },
+                )
+                if resp.is_success:
+                    last_response = resp.json()
+                else:
+                    import logging
+                    logging.getLogger(__name__).error(
+                        "telegram send failed chat_id=%s status=%s body=%s",
+                        chat_id, resp.status_code, resp.text[:300],
+                    )
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).error("telegram send error chat_id=%s: %s", chat_id, exc)
     return last_response
 
 
