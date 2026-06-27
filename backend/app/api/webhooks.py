@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.db.session import get_db
 import json as _json
 
-from app.models.entities import ApprovalRequest, Lead, Setting
+from app.models.entities import ApprovalRequest, ConsultationReminder, Lead, Setting
 from app.schemas.amocrm import parse_amocrm_webhook
 from app.services import amocrm, telegram
 from app.services.repository import upsert_incoming
@@ -178,6 +178,20 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             except Exception:
                 telegram.answer_callback(callback_id, "Ошибка при генерации")
             return {"ok": True, "action": action}
+        if action in ("came_yes", "came_no"):
+            reminder = db.get(ConsultationReminder, int(raw_id))
+            if not reminder:
+                telegram.answer_callback(callback_id, "Запись не найдена")
+                return {"ok": False, "error": "reminder_not_found"}
+            came = "Да" if action == "came_yes" else "Нет"
+            from app.services.google_sheets import update_came_status
+            update_came_status(reminder.sheet_name, reminder.row_number, came)
+            reminder.status = "came" if came == "Да" else "not_came"
+            db.commit()
+            label = "✅ Отмечено: пришёл" if came == "Да" else "❌ Отмечено: не пришёл"
+            telegram.answer_callback(callback_id, label)
+            return {"ok": True, "action": action}
+
         if lead:
             telegram.answer_callback(callback_id, telegram.lead_url(lead))
         return {"ok": True, "action": action}
@@ -189,6 +203,25 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
         db_manager_ids = _load_db_manager_ids(db)
         if not telegram.is_authorized_manager(manager_id, message_chat_id, extra_allowed=db_manager_ids):
             return {"ok": False, "error": "unauthorized_manager"}
+        if text in {"/consult", "/consultations"}:
+            from app.services.google_sheets import get_all_consultations_for_date
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            today = datetime.now(ZoneInfo(settings.timezone)).strftime("%d.%m.%Y")
+            consultations = get_all_consultations_for_date(today)
+            if not consultations:
+                telegram.send_text(manager_id, f"Консультаций на {today} нет.")
+            else:
+                lines = [f"Консультации на {today}:"]
+                for c in consultations:
+                    came_icon = "✅" if c.get("came") == "Да" else ("❌" if c.get("came") == "Нет" else "⏳")
+                    lines.append(
+                        f"\n{came_icon} {c.get('time', '—')} — {c.get('name', '—')}\n"
+                        f"  Тел: {c.get('phone', '—')} | {c.get('status', '—')}"
+                    )
+                telegram.send_text(manager_id, "\n".join(lines))
+            return {"ok": True, "action": "consult"}
+
         if text in {"/no-sorted", "/nosorted", "/unsorted"}:
             approvals = db.scalars(
                 select(ApprovalRequest)

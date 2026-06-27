@@ -385,7 +385,9 @@ def update_integrations_after_approval(db, lead: Lead, extracted: dict) -> None:
 
     if extracted.get("consultation_confirmed") and extracted.get("consultation_date") and extracted.get("consultation_time"):
         try:
-            response = google_sheets.update_consultation_sheet(extracted, lead.amocrm_lead_id)
+            response = google_sheets.update_consultation_sheet(
+                extracted, lead.amocrm_lead_id, chat_id=lead.chat_id or ""
+            )
             log_action(db, lead.id, "google_sheets.update_consultation", "success", extracted, response)
         except Exception as exc:
             log_action(db, lead.id, "google_sheets.update_consultation", "error", extracted, error=exc)
