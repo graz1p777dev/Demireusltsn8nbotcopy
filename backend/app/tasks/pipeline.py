@@ -17,7 +17,7 @@ from app.models.entities import (
     TrainingExample,
 )
 from app.services import amocrm, google_sheets, telegram
-from app.services.openai_service import AIResult, ai_edit_reply, classify_sales_intent, detect_and_translate, extract_fields, generate_reply, summarize_dialogue
+from app.services.openai_service import AIResult, ai_edit_reply, classify_sales_intent, detect_and_translate, detect_language, extract_fields, generate_reply, summarize_dialogue
 from app.services.slots import check_consultation_slots
 from app.tasks.celery_app import celery_app
 
@@ -228,6 +228,7 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         slot_context["now_bishkek"] = _now_bk.strftime("%H:%M")
         slot_context["date_bishkek"] = _now_bk.strftime("%d.%m.%Y")
         slot_context["is_working_hours"] = 10 <= _now_bk.hour < 21
+        slot_context["client_language"] = detect_language(combined_text)
         custom_prompt = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt"))
         reply_result = generate_reply(dialogue, slot_context, system_prompt=custom_prompt.value if custom_prompt else None)
         reply = str(reply_result.content)

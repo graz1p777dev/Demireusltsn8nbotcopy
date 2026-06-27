@@ -110,6 +110,11 @@ def generate_reply(dialogue: list[dict], slot_context: dict, system_prompt: str 
         time_note += "[НЕРАБОЧЕЕ ВРЕМЯ. ОБЯЗАТЕЛЬНО: в начале ответа сообщи что магазин работает с 10:00 до 21:00. НЕ предлагай запись на консультацию.]\n"
         # Clear free slots so model cannot offer a specific time
         slot_context = {**slot_context, "free_slots": []}
+    client_lang = slot_context.get("client_language", "ru")
+    if client_lang and client_lang != "ru":
+        _lang_names = {"ky": "кыргызском", "kz": "казахском", "en": "английском", "tr": "турецком", "uz": "узбекском", "de": "немецком", "fr": "французском", "zh": "китайском"}
+        lang_label = _lang_names.get(client_lang, client_lang)
+        time_note += f"[ЯЗЫК КЛИЕНТА: {lang_label} ({client_lang}). СТРОГО ОБЯЗАТЕЛЬНО: пиши ответ ТОЛЬКО на {lang_label} языке. Никакого русского!]\n"
 
     context_text = time_note + json.dumps(
         {"dialogue": cleaned, "check_consultation_slots": slot_context},
@@ -169,19 +174,31 @@ def summarize_dialogue(dialogue: list[dict]) -> str:
         return ""
 
 
-def _is_russian(text: str) -> bool:
-    """True if >40% of alphabetic chars are Cyrillic."""
-    alpha = [c for c in text if c.isalpha()]
-    if not alpha:
-        return True
-    cyrillic = sum(1 for c in alpha if "Ѐ" <= c <= "ӿ")
-    return cyrillic / len(alpha) >= 0.4
+def detect_language(text: str) -> str:
+    """Return ISO 639-1 language code for text (e.g. 'ru', 'ky', 'en'). Defaults to 'ru' on error."""
+    if not settings.openai_api_key or not text.strip():
+        return "ru"
+    try:
+        response = _client().chat.completions.create(
+            model=settings.openai_extractor_model,
+            temperature=0,
+            messages=[
+                {"role": "system", "content": (
+                    "Определи язык текста. Ответь ТОЛЬКО кодом языка ISO 639-1, без пробелов и пояснений. "
+                    "Примеры: ru, ky, kz, en, tr, uz, de, fr, zh. "
+                    "ВАЖНО: кыргызский — ky, казахский — kz; они пишутся кириллицей, но это НЕ русский (ru)."
+                )},
+                {"role": "user", "content": text[:400]},
+            ],
+        )
+        code = (response.choices[0].message.content or "ru").strip().lower()
+        return code[:5] if code else "ru"
+    except Exception:
+        return "ru"
 
 
 def detect_and_translate(client_message: str, ai_reply: str) -> dict[str, str | None]:
-    """If client message is not Russian, return Russian translations of both texts."""
-    if _is_russian(client_message):
-        return {"client_translation": None, "ai_reply_translation": None}
+    """Detect client message language. If not Russian, return Russian translations of both texts."""
     if not settings.openai_api_key:
         return {"client_translation": None, "ai_reply_translation": None}
     try:
@@ -190,10 +207,12 @@ def detect_and_translate(client_message: str, ai_reply: str) -> dict[str, str | 
             temperature=0,
             messages=[
                 {"role": "system", "content": (
-                    "Переведи оба текста на русский язык. "
-                    "Ответь строго в формате JSON: "
-                    "{\"client\": \"перевод сообщения клиента\", \"reply\": \"перевод ответа бота\"}. "
-                    "Никакого лишнего текста."
+                    "Определи язык сообщения клиента. "
+                    "ВАЖНО: кыргызский и казахский — это НЕ русский, даже если написаны кириллицей. "
+                    "Если язык НЕ русский — переведи оба текста на русский язык. "
+                    "Ответь строго JSON: "
+                    "{\"is_russian\": true|false, \"client\": null|\"перевод\", \"reply\": null|\"перевод\"}. "
+                    "Если русский: client=null, reply=null."
                 )},
                 {"role": "user", "content": (
                     f"Сообщение клиента:\n{client_message[:600]}\n\n"
@@ -203,9 +222,11 @@ def detect_and_translate(client_message: str, ai_reply: str) -> dict[str, str | 
         )
         raw = (response.choices[0].message.content or "").strip()
         data = json.loads(raw)
+        if data.get("is_russian", True):
+            return {"client_translation": None, "ai_reply_translation": None}
         return {
-            "client_translation": str(data.get("client", "")).strip() or None,
-            "ai_reply_translation": str(data.get("reply", "")).strip() or None,
+            "client_translation": str(data.get("client") or "").strip() or None,
+            "ai_reply_translation": str(data.get("reply") or "").strip() or None,
         }
     except Exception:
         return {"client_translation": None, "ai_reply_translation": None}
