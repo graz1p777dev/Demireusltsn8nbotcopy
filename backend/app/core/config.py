@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     amocrm_access_token: str = ""
     amocrm_webhook_secret: str = ""
     amojo_base_url: str = "https://amojo.amocrm.ru"
+    amocrm_ai_user_id: int = 0  # amoCRM user ID for "ИИ Агент" — assigned as responsible when bot takes a lead
 
     google_sheets_enabled: bool = False
     google_service_account_json: str = ""

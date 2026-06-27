@@ -111,7 +111,10 @@ def patch_lead(payload: dict) -> dict:
 def patch_lead_status(amocrm_lead_id: str, status_id: int | None) -> dict:
     if not status_id:
         return {"skipped": True, "reason": "status_id is empty"}
-    return patch_lead({"id": int(amocrm_lead_id), "status_id": int(status_id)})
+    payload: dict = {"id": int(amocrm_lead_id), "status_id": int(status_id)}
+    if settings.amocrm_ai_user_id:
+        payload["responsible_user_id"] = settings.amocrm_ai_user_id
+    return patch_lead(payload)
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
