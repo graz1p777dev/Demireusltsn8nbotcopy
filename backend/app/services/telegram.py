@@ -323,3 +323,53 @@ def answer_callback(callback_query_id: str, text: str = "") -> None:
         return
     with httpx.Client(timeout=10) as client:
         client.post(_api_url("answerCallbackQuery"), json={"callback_query_id": callback_query_id, "text": text})
+
+
+def send_text_all_managers(text: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> dict[str, str]:
+    """Send text message to all configured manager chats. Returns {chat_id: message_id}."""
+    if not settings.telegram_bot_token:
+        return {}
+    message_ids: dict[str, str] = {}
+    payload: dict = {"text": text, "parse_mode": parse_mode, "disable_web_page_preview": True}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    with httpx.Client(timeout=20) as client:
+        for chat_id in _all_manager_chat_ids():
+            try:
+                payload["chat_id"] = chat_id
+                resp = client.post(_api_url("sendMessage"), json=payload)
+                if resp.is_success:
+                    mid = resp.json().get("result", {}).get("message_id")
+                    if mid:
+                        message_ids[chat_id] = str(mid)
+            except Exception as exc:
+                _log.error("send_text_all_managers error chat_id=%s: %s", chat_id, exc)
+    return message_ids
+
+
+def send_consultation_reminder_card(
+    consult: dict,
+    reminder_id: int,
+) -> dict[str, str]:
+    """Send a per-consultation reminder card with Пришёл/Не пришёл buttons."""
+    name = escape(consult.get("name") or "—")
+    phone = escape(consult.get("phone") or "—")
+    time_str = escape(consult.get("time") or "—")
+    source = escape(consult.get("source") or "—")
+    lead_id = consult.get("lead_id") or ""
+    text = (
+        f"📅 <b>Консультация сегодня в {time_str}</b>\n\n"
+        f"👤 <b>Клиент:</b> {name}\n"
+        f"📞 <b>Телефон:</b> {phone}\n"
+        f"📌 <b>Источник:</b> {source}\n"
+        + (f"🔗 Lead ID: <code>{escape(str(lead_id))}</code>\n" if lead_id else "")
+    )
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Пришёл", "callback_data": f"came_yes:{reminder_id}"},
+                {"text": "❌ Не пришёл", "callback_data": f"came_no:{reminder_id}"},
+            ]
+        ]
+    }
+    return send_text_all_managers(text, reply_markup=keyboard)

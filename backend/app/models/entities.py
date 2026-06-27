@@ -225,3 +225,19 @@ class Setting(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class ConsultationReminder(Base, TimestampMixin):
+    """Tracks per-consultation reminder cards sent to Telegram managers."""
+    __tablename__ = "consultation_reminders"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sheet_name: Mapped[str] = mapped_column(String(128))
+    row_number: Mapped[int] = mapped_column()
+    consultation_date: Mapped[str] = mapped_column(String(16))
+    consultation_time: Mapped[str] = mapped_column(String(8))
+    client_name: Mapped[str | None] = mapped_column(String(255))
+    client_phone: Mapped[str | None] = mapped_column(String(64))
+    lead_id_amo: Mapped[str | None] = mapped_column(String(128))
+    telegram_message_ids: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
