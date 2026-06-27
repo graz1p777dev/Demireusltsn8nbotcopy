@@ -18,45 +18,51 @@ MONTH_SHEETS = {
     "12": "Записи-декабрь",
 }
 
+HEADERS = ["Дата", "Время", "Имя", "Телефон", "Формат", "Lead ID", "Источник"]
 
-def sheet_name_for_date(date_value: str) -> str:
-    month = datetime.strptime(date_value, "%d.%m.%Y").strftime("%m")
-    return MONTH_SHEETS[month]
+
+def _get_or_create_worksheet(spreadsheet, name: str):
+    try:
+        return spreadsheet.worksheet(name)
+    except Exception:
+        ws = spreadsheet.add_worksheet(title=name, rows=1000, cols=len(HEADERS))
+        ws.append_row(HEADERS)
+        return ws
 
 
 def update_consultation_sheet(extracted: dict, lead_id: str) -> dict:
     if not settings.google_sheets_enabled:
         return {"skipped": True, "reason": "google_sheets_enabled=false"}
+
     import gspread
     from google.oauth2.service_account import Credentials
 
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     if settings.google_service_account_json:
-        credentials = Credentials.from_service_account_info(json.loads(settings.google_service_account_json), scopes=scopes)
+        credentials = Credentials.from_service_account_info(
+            json.loads(settings.google_service_account_json), scopes=scopes
+        )
     else:
-        credentials = Credentials.from_service_account_file(settings.google_service_account_file, scopes=scopes)
+        credentials = Credentials.from_service_account_file(
+            settings.google_service_account_file, scopes=scopes
+        )
+
     client = gspread.authorize(credentials)
-    sheet = client.open_by_key(settings.google_sheets_spreadsheet_id).worksheet(
-        sheet_name_for_date(extracted["consultation_date"])
-    )
-    rows = sheet.get_all_records()
-    row_number = None
-    for index, row in enumerate(rows, start=2):
-        if row.get("Дата") == extracted["consultation_date"] and row.get("Время") == extracted["consultation_time"]:
-            row_number = index
-            break
-    if row_number is None:
-        return {"updated": False, "reason": "slot row not found"}
-    sheet.update(
-        f"A{row_number}:G{row_number}",
-        [[
-            extracted["consultation_date"],
-            extracted["consultation_time"],
-            extracted.get("name"),
-            extracted.get("consultation_format"),
-            extracted.get("contacts"),
-            lead_id,
-            "AI",
-        ]],
-    )
-    return {"updated": True, "row_number": row_number}
+    spreadsheet = client.open_by_key(settings.google_sheets_spreadsheet_id)
+
+    date_str = extracted.get("consultation_date", "")
+    month = datetime.strptime(date_str, "%d.%m.%Y").strftime("%m") if date_str else None
+    sheet_name = MONTH_SHEETS.get(month, "Записи") if month else "Записи"
+    ws = _get_or_create_worksheet(spreadsheet, sheet_name)
+
+    row = [
+        date_str,
+        extracted.get("consultation_time", ""),
+        extracted.get("name") or "",
+        extracted.get("contacts") or "",
+        extracted.get("consultation_format") or "Офлайн",
+        lead_id,
+        "AI Bot",
+    ]
+    ws.append_row(row, value_input_option="USER_ENTERED")
+    return {"appended": True, "sheet": sheet_name, "row": row}
