@@ -107,7 +107,13 @@ def memory_lines(extracted: dict | None) -> str:
     )
 
 
-def approval_card(approval: ApprovalRequest, lead: Lead, decision: str | None = None, messages_count: int = 1) -> str:
+def approval_card(
+    approval: ApprovalRequest,
+    lead: Lead,
+    decision: str | None = None,
+    messages_count: int = 1,
+    last_message_time: str | None = None,
+) -> str:
     client_name = lead.client.name if lead.client else "Без имени"
     contact = lead.client.phone if lead.client and lead.client.phone else lead.contact_id or "-"
     score = calc_score(approval.extracted_fields, messages_count)
@@ -124,13 +130,16 @@ def approval_card(approval: ApprovalRequest, lead: Lead, decision: str | None = 
         if approval.ai_reply_translation:
             translation_block += f"<i>Ответ ИИ:</i> {escape(approval.ai_reply_translation)}\n"
         translation_block += "\n"
+    time_line = f"🕐 <b>Написал:</b> {escape(last_message_time)}\n" if last_message_time else ""
     text = (
         "🟣 <b>Новый AI-ответ</b>\n\n"
         f"👤 <b>Клиент:</b> {escape(client_name or 'Без имени')}\n"
         f"📞 <b>Контакт:</b> {escape(str(contact))}\n"
         f"🧾 <b>Lead ID:</b> {escape(lead.amocrm_lead_id)}\n"
         f"📍 <b>Этап amoCRM:</b> {escape(approval.amocrm_stage_name or str(approval.amocrm_status_id or 'неизвестно'))}\n"
-        f"🔥 <b>Score:</b> {score}%\n\n"
+        f"🔥 <b>Score:</b> {score}%\n"
+        + time_line
+        + "\n"
         + summary_block
         + f'💬 <b>Сообщение клиента:</b>\n"{escape(approval.client_message)}"\n\n'
         + translation_block
@@ -145,6 +154,7 @@ def approval_card(approval: ApprovalRequest, lead: Lead, decision: str | None = 
     if decision:
         now = datetime.now(ZoneInfo(settings.timezone)).strftime("%d.%m.%Y %H:%M")
         text += f"\n\n━━━━━━━━━━━━━━━━━━━━\n{decision} · {now}"
+        text += f"\n🔗 <a href=\"{lead_url(lead)}\">Открыть лид в amoCRM</a>"
     return text
 
 
@@ -214,10 +224,16 @@ def delete_message(chat_id: str | int, message_id: int) -> None:
         client.post(_api_url("deleteMessage"), json={"chat_id": chat_id, "message_id": message_id})
 
 
-def send_approval_card(approval: ApprovalRequest, lead: Lead, messages_count: int = 1, extra_chat_ids: list[str] | None = None) -> dict:
+def send_approval_card(
+    approval: ApprovalRequest,
+    lead: Lead,
+    messages_count: int = 1,
+    extra_chat_ids: list[str] | None = None,
+    last_message_time: str | None = None,
+) -> dict:
     if not telegram_enabled():
         return {"skipped": True, "reason": "telegram not configured"}
-    card_text = approval_card(approval, lead, messages_count=messages_count)
+    card_text = approval_card(approval, lead, messages_count=messages_count, last_message_time=last_message_time)
     keyboard = approval_keyboard(approval.id, lead)
     message_ids: dict[str, str] = {}
     last_response: dict = {}
@@ -255,14 +271,19 @@ def edit_approval_card(
     decision: str | None = None,
     messages_count: int = 1,
     chat_id: str | None = None,
+    last_message_time: str | None = None,
 ) -> dict:
     if not telegram_enabled() or not approval.telegram_message_id:
         return {"skipped": True}
     pairs = _parse_message_ids(approval.telegram_message_id)
     if not pairs:
         return {"skipped": True}
-    keyboard = approval_keyboard(approval.id, lead) if not decision else None
-    card_text = approval_card(approval, lead, decision=decision, messages_count=messages_count)
+    if decision:
+        # Keep lead link button after decision
+        keyboard = {"inline_keyboard": [[{"text": "📂 Открыть лид", "url": lead_url(lead)}]]}
+    else:
+        keyboard = approval_keyboard(approval.id, lead)
+    card_text = approval_card(approval, lead, decision=decision, messages_count=messages_count, last_message_time=last_message_time)
     last_response: dict = {}
     with httpx.Client(timeout=20) as client:
         for target_chat, message_id in pairs:
@@ -274,7 +295,7 @@ def edit_approval_card(
                         "message_id": int(message_id),
                         "text": card_text,
                         "parse_mode": "HTML",
-                        **({"reply_markup": keyboard} if keyboard else {"reply_markup": {"inline_keyboard": []}}),
+                        "reply_markup": keyboard,
                         "disable_web_page_preview": True,
                     },
                 )

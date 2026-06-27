@@ -229,6 +229,19 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         slot_context["date_bishkek"] = _now_bk.strftime("%d.%m.%Y")
         slot_context["is_working_hours"] = 10 <= _now_bk.hour < 21
         slot_context["client_language"] = detect_language(combined_text)
+
+        # Time of current client message (for card display)
+        _current_msg_bk = buffers[-1].timestamp.astimezone(ZoneInfo(settings.timezone))
+        _last_msg_display = _current_msg_bk.strftime("%H:%M %d.%m.%Y")
+
+        # Minutes since previous client message (for greeting logic)
+        _prev_user_msgs = [m for m in all_messages if m.role == "user" and m.created_at]
+        if _prev_user_msgs:
+            _prev_last_bk = _prev_user_msgs[-1].created_at.astimezone(ZoneInfo(settings.timezone))
+            _minutes_since = int((_now_bk - _prev_last_bk).total_seconds() / 60)
+        else:
+            _minutes_since = 9999
+        slot_context["minutes_since_last_message"] = _minutes_since
         custom_prompt = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt"))
         reply_result = generate_reply(dialogue, slot_context, system_prompt=custom_prompt.value if custom_prompt else None)
         reply = str(reply_result.content)
@@ -280,7 +293,8 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
             db.commit()
             try:
                 response = telegram.send_approval_card(
-                    approval, lead, messages_count=len(dialogue), extra_chat_ids=extra_managers
+                    approval, lead, messages_count=len(dialogue),
+                    extra_chat_ids=extra_managers, last_message_time=_last_msg_display,
                 )
                 message_ids_json = response.get("_message_ids")
                 if message_ids_json:
