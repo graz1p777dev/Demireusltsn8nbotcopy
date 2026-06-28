@@ -15,11 +15,13 @@ from app.tasks.pipeline import (
     apply_edited_reply,
     approve_request,
     pop_ai_edit_session,
+    pop_edit_prompt_msg,
     pop_edit_session,
     process_lead_buffer,
     reject_request,
     save_request,
     set_ai_edit_session,
+    set_edit_prompt_msg,
     set_edit_session,
 )
 
@@ -137,12 +139,18 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
         if action == "edit":
             set_edit_session(db, manager_id, approval_id)
             telegram.answer_callback(callback_id)
-            telegram.send_text(manager_id, f"✏️ Редакт вручную №{approval_id:07d}\n\nОтправьте новый текст ответа.")
+            resp = telegram.send_text(manager_id, f"✏️ Редакт вручную №{approval_id:07d}\n\nОтправьте новый текст ответа.")
+            mid = resp.get("result", {}).get("message_id")
+            if mid:
+                set_edit_prompt_msg(db, manager_id, mid)
             return {"ok": True, "action": action}
         if action == "ai_edit":
             set_ai_edit_session(db, manager_id, approval_id)
             telegram.answer_callback(callback_id)
-            telegram.send_text(manager_id, f"🤖 AI редакт №{approval_id:07d}\n\nНапишите промпт — как изменить ответ?\n\nНапример: «сделай короче», «добавь про акцию», «переведи на кыргызский»")
+            resp = telegram.send_text(manager_id, f"🤖 AI редакт №{approval_id:07d}\n\nНапишите промпт — как изменить ответ?\n\nНапример: «сделай короче», «добавь про акцию», «переведи на кыргызский»")
+            mid = resp.get("result", {}).get("message_id")
+            if mid:
+                set_edit_prompt_msg(db, manager_id, mid)
             return {"ok": True, "action": action}
         if action == "memory":
             telegram.answer_callback(callback_id)
@@ -246,6 +254,9 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
         # Ручное редактирование
         edit_approval_id = pop_edit_session(db, manager_id)
         if edit_approval_id and text:
+            prompt_mid = pop_edit_prompt_msg(db, manager_id)
+            if prompt_mid:
+                telegram.delete_message(manager_id, prompt_mid)
             approval = apply_edited_reply(db, edit_approval_id, manager_id, text)
             lead = db.get(Lead, approval.lead_id) if approval else None
             if approval and lead:
@@ -255,6 +266,9 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
         # AI-редактор
         ai_edit_approval_id = pop_ai_edit_session(db, manager_id)
         if ai_edit_approval_id and text:
+            prompt_mid = pop_edit_prompt_msg(db, manager_id)
+            if prompt_mid:
+                telegram.delete_message(manager_id, prompt_mid)
             approval = apply_ai_edited_reply(db, ai_edit_approval_id, manager_id, text)
             lead = db.get(Lead, approval.lead_id) if approval else None
             if approval and lead:
