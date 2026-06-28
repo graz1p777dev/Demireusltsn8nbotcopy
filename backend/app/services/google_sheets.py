@@ -2,6 +2,8 @@ import json
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 from app.core.config import settings
 
 MONTH_SHEETS = {
@@ -45,6 +47,7 @@ def _auth_client():
     return gspread.authorize(creds)
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
 def _open_spreadsheet():
     return _auth_client().open_by_key(settings.google_sheets_spreadsheet_id)
 
