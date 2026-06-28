@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useMemo, useState, useEffect, useCallback } from "react";
-import { RefreshCw, Send, Bot, User, Power, PowerOff, MessageSquare, X, ChevronDown, ChevronRight, LogOut, UserPlus, Trash2, Shield, ShieldOff } from "lucide-react";
+import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { RefreshCw, Send, Bot, User, Power, PowerOff, MessageSquare, X, ChevronDown, ChevronRight, LogOut, UserPlus, Trash2, Shield, ShieldOff, FlaskConical } from "lucide-react";
 
 import { useRouter } from "next/navigation";
 import { apiGet, apiJson, Conversation } from "@/lib/api";
@@ -698,6 +698,118 @@ export function UsersPanel() {
           ))}
         </div>
       )}
+    </section>
+  );
+}
+
+/* ── AI Test Panel ── */
+type ChatMsg = { role: "user" | "assistant"; content: string; tokens?: number };
+
+export function AiTestPanel() {
+  const [history, setHistory] = useState<ChatMsg[]>([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [history]);
+
+  async function send() {
+    const text = input.trim();
+    if (!text || loading) return;
+    const newHistory: ChatMsg[] = [...history, { role: "user", content: text }];
+    setHistory(newHistory);
+    setInput("");
+    setLoading(true);
+    try {
+      const res = await apiJson<{ ok: boolean; reply: string; tokens?: number; model?: string }>(
+        "/admin/ai-test", "POST",
+        { message: text, history: history.map(m => ({ role: m.role, content: m.content })) }
+      );
+      setHistory(prev => [...prev, { role: "assistant", content: res.reply, tokens: res.tokens }]);
+    } catch {
+      setHistory(prev => [...prev, { role: "assistant", content: "❌ Ошибка запроса" }]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <section style={{ padding: "16px 20px" }}>
+      <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 14 }}>
+        Тест ИИ бота с текущим промптом. История диалога сохраняется внутри панели и не попадает в CRM.
+      </p>
+
+      {/* Chat area */}
+      <div style={{
+        minHeight: 240, maxHeight: 420, overflowY: "auto",
+        background: "var(--bg-3)", border: "1px solid var(--border)",
+        borderRadius: 10, padding: "12px 14px", marginBottom: 12,
+        display: "flex", flexDirection: "column", gap: 10,
+      }}>
+        {history.length === 0 && (
+          <div style={{ color: "var(--text-3)", fontSize: 13, textAlign: "center", marginTop: 40 }}>
+            Напишите сообщение — бот ответит как в реальном диалоге
+          </div>
+        )}
+        {history.map((m, i) => (
+          <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: m.role === "user" ? "flex-end" : "flex-start", gap: 2 }}>
+            <div style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 1 }}>
+              {m.role === "user" ? <><User size={9} /> Вы</> : <><Bot size={9} /> ИИ бот{m.tokens ? ` · ${m.tokens} tok` : ""}</>}
+            </div>
+            <div style={{
+              background: m.role === "user" ? "var(--accent)" : "var(--bg-2)",
+              color: m.role === "user" ? "#fff" : "var(--text)",
+              borderRadius: m.role === "user" ? "12px 12px 2px 12px" : "12px 12px 12px 2px",
+              padding: "8px 12px", fontSize: 13, maxWidth: "80%",
+              border: m.role === "assistant" ? "1px solid var(--border)" : "none",
+              whiteSpace: "pre-wrap", lineHeight: 1.5,
+            }}>
+              {m.content}
+            </div>
+          </div>
+        ))}
+        {loading && (
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+            <div style={{
+              background: "var(--bg-2)", border: "1px solid var(--border)",
+              borderRadius: "12px 12px 12px 2px", padding: "8px 14px",
+              fontSize: 13, color: "var(--text-3)",
+            }}>
+              <RefreshCw size={12} style={{ animation: "spin .8s linear infinite" }} /> печатает…
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input */}
+      <div style={{ display: "flex", gap: 8 }}>
+        <textarea
+          rows={2}
+          placeholder="Введите сообщение клиента… (Ctrl+Enter)"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && e.ctrlKey) send(); }}
+          disabled={loading}
+          style={{
+            flex: 1, background: "var(--bg-3)", border: "1px solid var(--border)",
+            color: "var(--text)", borderRadius: 8, padding: "8px 12px",
+            fontSize: 13, resize: "none", fontFamily: "var(--sans)", outline: "none",
+          }}
+        />
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <button className="btn-primary" onClick={send} disabled={loading || !input.trim()}
+            style={{ padding: "8px 14px", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+            <Send size={13} /> {loading ? "…" : "Отправить"}
+          </button>
+          <button className="btn-ghost" onClick={() => setHistory([])}
+            style={{ padding: "6px 14px", fontSize: 12 }}>
+            <X size={13} /> Очистить
+          </button>
+        </div>
+      </div>
     </section>
   );
 }
