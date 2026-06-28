@@ -132,7 +132,7 @@ def approval_card(
         translation_block += "\n"
     time_line = f"🕐 <b>Написал:</b> {escape(last_message_time)}\n" if last_message_time else ""
     text = (
-        "🟣 <b>Новый AI-ответ</b>\n\n"
+        f"🟣 <b>Новый AI-ответ №{approval.id:07d}</b>\n\n"
         f"👤 <b>Клиент:</b> {escape(client_name or 'Без имени')}\n"
         f"📞 <b>Контакт:</b> {escape(str(contact))}\n"
         f"🧾 <b>Lead ID:</b> {escape(lead.amocrm_lead_id)}\n"
