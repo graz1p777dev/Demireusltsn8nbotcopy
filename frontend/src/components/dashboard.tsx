@@ -878,13 +878,24 @@ export function ManagersPanel() {
           onChange={e => setName(e.target.value)}
           style={{ flex: "1 1 140px", minWidth: 0 }}
         />
-        <input
-          className="input"
-          placeholder="Telegram Chat ID"
-          value={chatId}
-          onChange={e => setChatId(e.target.value)}
-          style={{ flex: "1 1 140px", minWidth: 0 }}
-        />
+        <div style={{ position: "relative", flex: "1 1 140px", minWidth: 0, display: "flex", alignItems: "center" }}>
+          <input
+            className="input"
+            placeholder="Telegram Chat ID"
+            value={chatId}
+            onChange={e => setChatId(e.target.value)}
+            style={{ width: "100%", paddingRight: 28 }}
+          />
+          <div style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", cursor: "default" }}
+               title="Как узнать Chat ID: напишите боту @userinfobot в Telegram и скопируйте число из поля «Id»">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                 style={{ color: "var(--text-3)", display: "block" }}>
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="16" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+          </div>
+        </div>
         <button className="btn-primary" onClick={add} disabled={saving || !name.trim() || !chatId.trim()}
           style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <UserPlus size={14} /> Добавить
