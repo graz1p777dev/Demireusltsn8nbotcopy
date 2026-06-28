@@ -433,6 +433,15 @@ def pop_ai_edit_session(db, manager_id: str) -> int | None:
     return int(value) if value else None
 
 
+def set_edit_prompt_msg(db, manager_id: str, message_id: int) -> None:
+    _set_session(db, f"telegram_edit_prompt_msg:{manager_id}", str(message_id))
+
+
+def pop_edit_prompt_msg(db, manager_id: str) -> int | None:
+    value = _pop_session(db, f"telegram_edit_prompt_msg:{manager_id}")
+    return int(value) if value else None
+
+
 def apply_ai_edited_reply(db, approval_id: int, manager_id: str, edit_prompt: str) -> ApprovalRequest | None:
     approval = db.get(ApprovalRequest, approval_id)
     if not approval:
