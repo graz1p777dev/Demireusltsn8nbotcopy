@@ -137,12 +137,12 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
         if action == "edit":
             set_edit_session(db, manager_id, approval_id)
             telegram.answer_callback(callback_id)
-            telegram.send_text(manager_id, "✏️ Отправьте новый текст ответа.")
+            telegram.send_text(manager_id, f"✏️ Редакт вручную №{approval_id:07d}\n\nОтправьте новый текст ответа.")
             return {"ok": True, "action": action}
         if action == "ai_edit":
             set_ai_edit_session(db, manager_id, approval_id)
             telegram.answer_callback(callback_id)
-            telegram.send_text(manager_id, "🤖 Напишите промпт — как изменить ответ?\n\nНапример: «сделай короче», «добавь про акцию», «переведи на кыргызский»")
+            telegram.send_text(manager_id, f"🤖 AI редакт №{approval_id:07d}\n\nНапишите промпт — как изменить ответ?\n\nНапример: «сделай короче», «добавь про акцию», «переведи на кыргызский»")
             return {"ok": True, "action": action}
         if action == "memory":
             telegram.answer_callback(callback_id)
