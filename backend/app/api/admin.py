@@ -209,6 +209,43 @@ def update_bot_prompt(body: BotPromptUpdate, db: Session = Depends(get_db)) -> d
     return {"ok": True}
 
 
+class AiTestRequest(BaseModel):
+    message: str
+    history: list[dict] = []  # [{"role": "user"|"assistant", "content": "..."}]
+
+
+@router.post("/ai-test")
+def ai_test(body: AiTestRequest, db: Session = Depends(get_db)) -> dict:
+    from app.services.openai_service import generate_reply
+    from app.services.prompts import SALES_AGENT_SYSTEM_PROMPT
+    from zoneinfo import ZoneInfo
+
+    row = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt"))
+    system_prompt = row.value if row else SALES_AGENT_SYSTEM_PROMPT
+
+    now = datetime.now(ZoneInfo(app_settings.timezone))
+    slot_context = {
+        "now_bishkek": now.strftime("%H:%M"),
+        "date_bishkek": now.strftime("%d.%m.%Y"),
+        "is_working_hours": True,
+        "minutes_since_last_message": 9999,
+        "free_slots": [],
+        "client_language": "ru",
+    }
+
+    dialogue = [
+        {"role": m["role"], "content": m["content"]}
+        for m in body.history
+    ]
+    dialogue.append({"role": "user", "content": body.message})
+
+    try:
+        result = generate_reply(dialogue, slot_context, system_prompt=system_prompt)
+        return {"ok": True, "reply": str(result.content), "tokens": result.total_tokens, "model": result.model}
+    except Exception as e:
+        return {"ok": False, "reply": f"Ошибка: {e}"}
+
+
 @router.get("/analytics")
 def get_analytics(db: Session = Depends(get_db)) -> dict:
     # Hourly distribution of client messages (Bishkek UTC+6)
