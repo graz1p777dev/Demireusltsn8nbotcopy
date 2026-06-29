@@ -425,8 +425,12 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             lead = db.get(Lead, approval.lead_id) if approval else None
             if approval and lead:
                 clear_claim(db, edit_approval_id)
+                db.refresh(approval)
                 has_templates = bool(_load_templates(db))
-                telegram.edit_approval_card(approval, lead, has_templates=has_templates)
+                result = telegram.edit_approval_card(approval, lead, has_templates=has_templates)
+                if result.get("skipped") or result.get("_all_failed") or result.get("error"):
+                    _log.error("edit_approval_card failed after manual edit approval_id=%s msg_id=%s result=%s", edit_approval_id, approval.telegram_message_id, result)
+                    telegram.send_text(manager_id, f"⚠️ Не удалось обновить карточку №{edit_approval_id:07d}, но ответ сохранён. Нажмите «Принять» — правильный ответ будет отправлен клиенту.")
             return {"ok": True, "action": "edited"}
 
         # Перевод ответа
@@ -487,6 +491,7 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             lead = db.get(Lead, approval.lead_id) if approval else None
             if approval and lead:
                 clear_claim(db, ai_edit_approval_id)
+                db.refresh(approval)
                 has_templates = bool(_load_templates(db))
                 telegram.edit_approval_card(approval, lead, has_templates=has_templates)
             return {"ok": True, "action": "ai_edited"}
