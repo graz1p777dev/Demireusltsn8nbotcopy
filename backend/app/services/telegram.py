@@ -330,12 +330,45 @@ def delete_message(chat_id: str | int, message_id: int) -> None:
         client.post(_api_url("deleteMessage"), json={"chat_id": chat_id, "message_id": message_id})
 
 
+def _send_photo_to_chats(
+    http: httpx.Client,
+    chat_ids: list[str],
+    reply_to_message_ids: dict[str, str] | None,
+    photo_url: str | None = None,
+    photo_bytes: bytes | None = None,
+    photo_ext: str = "jpg",
+    photo_content_type: str = "image/jpeg",
+) -> bool:
+    """Send a photo to all chats. Returns True if at least one succeeded."""
+    ok = False
+    for chat_id in chat_ids:
+        try:
+            base: dict = {"chat_id": chat_id}
+            if reply_to_message_ids and chat_id in reply_to_message_ids:
+                base["reply_to_message_id"] = reply_to_message_ids[chat_id]
+            if photo_url:
+                resp = http.post(_api_url("sendPhoto"), data={**base, "photo": photo_url})
+            else:
+                resp = http.post(
+                    _api_url("sendPhoto"),
+                    files={"photo": (f"photo.{photo_ext}", photo_bytes, photo_content_type)},
+                    data=base,
+                )
+            if resp.is_success and resp.json().get("ok"):
+                ok = True
+            else:
+                _log.warning("sendPhoto failed chat_id=%s: %s", chat_id, resp.text[:200])
+        except Exception as exc:
+            _log.error("sendPhoto error chat_id=%s: %s", chat_id, exc)
+    return ok
+
+
 def _forward_client_photos(
     client_message: str,
     chat_ids: list[str],
     reply_to_message_ids: dict[str, str] | None = None,
 ) -> None:
-    """Download [picture] attachments from amoCRM and send as replies to the approval card."""
+    """Send [picture] attachments from the client message as Telegram photos."""
     urls = _PICTURE_RE.findall(client_message)
     if not urls or not settings.telegram_bot_token:
         return
@@ -343,7 +376,12 @@ def _forward_client_photos(
     if settings.amocrm_access_token:
         auth_headers["Authorization"] = f"Bearer {settings.amocrm_access_token}"
     with httpx.Client(timeout=30, follow_redirects=True) as http:
-        for url in urls[:5]:  # cap at 5 photos
+        for url in urls[:5]:
+            # Try sending URL directly — Telegram fetches it without our auth
+            sent = _send_photo_to_chats(http, chat_ids, reply_to_message_ids, photo_url=url)
+            if sent:
+                continue
+            # Fallback: download with amoCRM Bearer token and upload as binary
             try:
                 img = http.get(url, headers=auth_headers)
                 if not img.is_success:
@@ -351,18 +389,10 @@ def _forward_client_photos(
                     continue
                 content_type = img.headers.get("content-type", "image/jpeg").split(";")[0].strip()
                 ext = "jpg" if "jpeg" in content_type else content_type.split("/")[-1]
-                for chat_id in chat_ids:
-                    try:
-                        data: dict = {"chat_id": chat_id}
-                        if reply_to_message_ids and chat_id in reply_to_message_ids:
-                            data["reply_to_message_id"] = reply_to_message_ids[chat_id]
-                        http.post(
-                            _api_url("sendPhoto"),
-                            files={"photo": (f"photo.{ext}", img.content, content_type)},
-                            data=data,
-                        )
-                    except Exception as exc:
-                        _log.error("sendPhoto error chat_id=%s: %s", chat_id, exc)
+                _send_photo_to_chats(
+                    http, chat_ids, reply_to_message_ids,
+                    photo_bytes=img.content, photo_ext=ext, photo_content_type=content_type,
+                )
             except Exception as exc:
                 _log.error("photo download error url=%.80s: %s", url, exc)
 
