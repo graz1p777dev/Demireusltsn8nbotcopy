@@ -194,6 +194,8 @@ def summarize_dialogue(dialogue: list[dict]) -> tuple[str, AIResult | None]:
             purpose="hypervisor",
             usage=_usage_payload(response),
             latency_ms=latency_ms,
+            input_cost_per_1m=settings.openai_input_cost_extractor,
+            output_cost_per_1m=settings.openai_output_cost_extractor,
         )
         return result.content.strip(), result
     except Exception:
@@ -289,7 +291,9 @@ def classify_sales_intent(dialogue: list[dict], latest_message: str) -> AIResult
         content["is_sales"] = bool(content.get("is_sales"))
         content["is_complex"] = bool(content.get("is_complex", True))
         return _result(content=content, model=settings.openai_extractor_model,
-                       purpose="sales_intent", usage=_usage_payload(response), latency_ms=latency_ms)
+                       purpose="sales_intent", usage=_usage_payload(response), latency_ms=latency_ms,
+                       input_cost_per_1m=settings.openai_input_cost_extractor,
+                       output_cost_per_1m=settings.openai_output_cost_extractor)
 
     started = perf_counter()
     response = _deepseek_client().chat.completions.create(
@@ -307,12 +311,14 @@ def classify_sales_intent(dialogue: list[dict], latest_message: str) -> AIResult
     latency_ms = int((perf_counter() - started) * 1000)
     content = fallback | json.loads(response.choices[0].message.content or "{}")
     content["is_sales"] = bool(content.get("is_sales"))
-    return AIResult(
+    return _result(
         content=content,
         model=model,
         purpose="sales_intent",
         usage=_usage_payload(response),
         latency_ms=latency_ms,
+        input_cost_per_1m=settings.deepseek_input_cost_per_1m,
+        output_cost_per_1m=settings.deepseek_output_cost_per_1m,
     )
 
 
@@ -349,6 +355,8 @@ def extract_fields(dialogue: list[dict], contacts: str | None) -> AIResult:
         purpose="lead_extractor",
         usage=_usage_payload(response),
         latency_ms=latency_ms,
+        input_cost_per_1m=settings.openai_input_cost_extractor,
+        output_cost_per_1m=settings.openai_output_cost_extractor,
     )
 
 
