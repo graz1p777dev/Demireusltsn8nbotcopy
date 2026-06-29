@@ -1250,3 +1250,94 @@ export function TemplatesPanel() {
   );
 }
 
+export function StopWordsPanel() {
+  const [words, setWords] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [input, setInput] = useState("");
+
+  const load = () => {
+    setLoading(true);
+    apiGet<{ words: string[] }>("/admin/stop-words")
+      .then(r => setWords(r.words))
+      .catch(() => setWords([]))
+      .finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const save = async (updated: string[]) => {
+    await apiJson("/admin/stop-words", "PUT", { words: updated });
+    setWords(updated);
+  };
+
+  const add = async () => {
+    const w = input.trim().toLowerCase();
+    if (!w || words.includes(w)) return;
+    setInput("");
+    await save([...words, w]);
+  };
+
+  const remove = async (w: string) => {
+    await save(words.filter(x => x !== w));
+  };
+
+  return (
+    <section style={{ padding: "20px 24px" }}>
+      <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 16 }}>
+        Если клиент напишет любое из этих слов — карточка придёт менеджеру с флагом <b>⛔</b>, без AI-ответа.
+        Примеры: <i>жалоба, верните, обман, аллергия, ожог</i>
+      </div>
+
+      {loading ? (
+        <div style={{ color: "var(--text-3)", fontSize: 13 }}>Загрузка…</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16, minHeight: 32 }}>
+            {words.length === 0 && (
+              <span style={{ color: "var(--text-3)", fontSize: 13 }}>Стоп-слов нет</span>
+            )}
+            {words.map(w => (
+              <span key={w} style={{
+                background: "var(--bg-3)", border: "1px solid var(--border)",
+                borderRadius: 20, padding: "4px 12px", fontSize: 13,
+                display: "flex", alignItems: "center", gap: 6,
+              }}>
+                {w}
+                <button onClick={() => remove(w)} style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  color: "var(--text-3)", fontSize: 15, lineHeight: 1, padding: 0,
+                  display: "flex", alignItems: "center",
+                }}>
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && add()}
+              placeholder="Добавить слово…"
+              style={{
+                flex: 1, maxWidth: 260,
+                background: "var(--bg-2)", border: "1px solid var(--border)",
+                color: "var(--text)", borderRadius: 7, padding: "7px 12px",
+                fontSize: 13, fontFamily: "var(--sans)", outline: "none",
+              }}
+            />
+            <button
+              className="btn-primary"
+              style={{ padding: "7px 14px", fontSize: 12, display: "flex", alignItems: "center", gap: 5 }}
+              onClick={add}
+              disabled={!input.trim()}
+            >
+              <Plus size={12} /> Добавить
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
