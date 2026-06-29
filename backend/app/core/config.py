@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     telegram_allowed_manager_ids: str = ""
     telegram_webhook_secret: str = ""
     public_backend_url: str = ""
+    frontend_url: str = "https://demiresults.alihan-torebekov.kg"
     amocrm_status_on_approve: int | None = None
     amocrm_status_on_edit: int | None = None
     amocrm_status_on_reject: int | None = None

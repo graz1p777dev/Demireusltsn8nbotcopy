@@ -93,6 +93,10 @@ def lead_url(lead: Lead) -> str:
     return f"{settings.amocrm_base_url.rstrip('/')}/leads/detail/{lead.amocrm_lead_id}"
 
 
+def chat_history_url(lead: Lead) -> str:
+    return f"{settings.frontend_url.rstrip('/')}/chat/{lead.amocrm_lead_id}"
+
+
 def memory_lines(extracted: dict | None) -> str:
     if not extracted:
         return "- Пока нет извлеченной памяти"
@@ -138,6 +142,7 @@ def approval_card(
         f"🧾 <b>Lead ID:</b> {escape(lead.amocrm_lead_id)}\n"
         f"📍 <b>Этап amoCRM:</b> {escape(approval.amocrm_stage_name or str(approval.amocrm_status_id or 'неизвестно'))}\n"
         f"🔥 <b>Score:</b> {score}%\n"
+        f"💬 <a href=\"{chat_history_url(lead)}\">История чата</a>\n"
         + time_line
         + "\n"
         + summary_block
