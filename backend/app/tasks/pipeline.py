@@ -416,6 +416,19 @@ def update_integrations_after_approval(db, lead: Lead, extracted: dict) -> None:
         apply_sales_stage_from_extracted(db, lead, extracted)
 
 
+def _load_manager_name(db, manager_id: str) -> str:
+    try:
+        row = db.scalar(select(Setting).where(Setting.key == "telegram_managers"))
+        if not row or not row.value:
+            return ""
+        for m in json.loads(row.value):
+            if str(m.get("chat_id", "")) == manager_id:
+                return m.get("name", "")
+    except Exception:
+        pass
+    return ""
+
+
 def _get_session(db, key: str) -> str | None:
     setting = db.scalar(select(Setting).where(Setting.key == key))
     return setting.value if setting else None
@@ -528,14 +541,15 @@ def apply_ai_edited_reply(db, approval_id: int, manager_id: str, edit_prompt: st
     return approval
 
 
-def _update_card_or_notify(approval: ApprovalRequest, lead: Lead, decision: str) -> None:
+def _update_card_or_notify(approval: ApprovalRequest, lead: Lead, decision: str, manager_name: str = "") -> None:
     try:
+        decision_display = f"{decision} · {manager_name}" if manager_name else decision
         if approval.telegram_message_id:
-            telegram.edit_approval_card(approval, lead, decision=decision)
+            telegram.edit_approval_card(approval, lead, decision=decision_display)
         else:
             telegram.send_text(
                 settings.telegram_manager_chat_id,
-                f"{decision} — Lead {lead.amocrm_lead_id}",
+                f"{decision_display} — Lead {lead.amocrm_lead_id}",
             )
     except Exception:
         pass
@@ -578,7 +592,7 @@ def approve_request(db, approval_id: int, manager_id: str) -> bool:
         if ok:
             save_training_example(db, approval)
 
-    _update_card_or_notify(approval, lead, "✅ Принято")
+    _update_card_or_notify(approval, lead, "✅ Принято", _load_manager_name(db, manager_id))
     return ok
 
 
@@ -630,7 +644,7 @@ def reject_request(db, approval_id: int, manager_id: str) -> bool:
     lead = db.get(Lead, approval.lead_id)
     if lead:
         move_lead_status(db, lead, settings.amocrm_status_on_reject, "approval_rejected")
-        _update_card_or_notify(approval, lead, "❌ Отклонено")
+        _update_card_or_notify(approval, lead, "❌ Отклонено", _load_manager_name(db, manager_id))
     log_action(db, approval.lead_id, "telegram.approval_rejected", "success", {"approval_id": approval_id})
     return True
 
@@ -645,7 +659,7 @@ def save_request(db, approval_id: int, manager_id: str) -> bool:
     lead = db.get(Lead, approval.lead_id)
     if lead:
         move_lead_status(db, lead, settings.amocrm_status_on_save, "approval_saved_unsorted")
-        _update_card_or_notify(approval, lead, "💾 Сохранено")
+        _update_card_or_notify(approval, lead, "💾 Сохранено", _load_manager_name(db, manager_id))
     log_action(db, approval.lead_id, "telegram.approval_saved", "success", {"approval_id": approval_id})
     return True
 
