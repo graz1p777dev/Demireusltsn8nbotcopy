@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { RefreshCw, Send, Bot, User, Power, PowerOff, MessageSquare, X, ChevronDown, ChevronRight, LogOut, UserPlus, Trash2, Shield, ShieldOff, FlaskConical } from "lucide-react";
+import { RefreshCw, Send, Bot, User, Power, PowerOff, MessageSquare, X, ChevronDown, ChevronRight, LogOut, UserPlus, Trash2, Shield, ShieldOff, FlaskConical, Download, Plus, Pencil } from "lucide-react";
 
 import { useRouter } from "next/navigation";
 import { apiGet, apiJson, Conversation } from "@/lib/api";
@@ -225,6 +225,15 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
           <strong>Диалоги</strong>
           <div className="panel-header-right">
             <span className="badge blue">{filtered.length}</span>
+            <a
+              href="/api/backend/admin/export/leads"
+              download
+              className="btn-ghost"
+              title="Скачать CSV"
+              style={{ display: "flex", alignItems: "center" }}
+            >
+              <Download size={13} />
+            </a>
             <button
               className="btn-ghost"
               onClick={refresh}
@@ -1096,6 +1105,114 @@ export function ManagersPanel() {
               <button className="btn-danger" style={{ padding: "4px 8px" }} onClick={() => remove(m)} title="Удалить">
                 <Trash2 size={13} />
               </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ── Reply Templates Panel ── */
+type Template = { id: number; name: string; text: string };
+
+export function TemplatesPanel() {
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState<Template | null>(null);
+  const [name, setName] = useState("");
+  const [tplText, setTplText] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    apiGet<Template[]>("/admin/templates")
+      .then(setTemplates)
+      .catch(() => setTemplates([]))
+      .finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  const openAdd = () => { setEditing(null); setName(""); setTplText(""); setShowForm(true); };
+  const openEdit = (t: Template) => { setEditing(t); setName(t.name); setTplText(t.text); setShowForm(true); };
+
+  const save = async () => {
+    if (!name.trim() || !tplText.trim()) return;
+    setSaving(true);
+    try {
+      if (editing) {
+        await apiJson(`/admin/templates/${editing.id}`, "PATCH", { name, text: tplText });
+      } else {
+        await apiJson("/admin/templates", "POST", { name, text: tplText });
+      }
+      setShowForm(false);
+      load();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (t: Template) => {
+    if (!confirm(`Удалить шаблон «${t.name}»?`)) return;
+    await apiJson(`/admin/templates/${t.id}`, "DELETE");
+    load();
+  };
+
+  return (
+    <section style={{ padding: "20px 24px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: "var(--text-3)" }}>
+          Менеджер видит кнопку «📋 Шаблоны» в Telegram и выбирает готовый ответ одним нажатием
+        </div>
+        <button className="btn-primary" style={{ padding: "7px 14px", fontSize: 12, display: "flex", alignItems: "center", gap: 5 }} onClick={openAdd}>
+          <Plus size={12} /> Добавить
+        </button>
+      </div>
+
+      {showForm && (
+        <div style={{ background: "var(--bg-3)", border: "1px solid var(--border)", borderRadius: 10, padding: 16, marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>
+            {editing ? "Редактировать шаблон" : "Новый шаблон"}
+          </div>
+          <input
+            placeholder="Название (напр: Стандартный ответ)"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            style={{ width: "100%", marginBottom: 8, background: "var(--bg-2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 7, padding: "7px 12px", fontSize: 13, fontFamily: "var(--sans)", outline: "none" }}
+          />
+          <textarea
+            placeholder="Текст шаблона…"
+            value={tplText}
+            onChange={e => setTplText(e.target.value)}
+            rows={4}
+            style={{ width: "100%", marginBottom: 10, background: "var(--bg-2)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 7, padding: "7px 12px", fontSize: 13, fontFamily: "var(--sans)", outline: "none", resize: "vertical" }}
+          />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn-primary" style={{ padding: "7px 14px", fontSize: 12 }} onClick={save} disabled={saving || !name.trim() || !tplText.trim()}>
+              {saving ? "Сохранение…" : "Сохранить"}
+            </button>
+            <button className="btn-ghost" style={{ padding: "7px 14px", fontSize: 12 }} onClick={() => setShowForm(false)}>Отмена</button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ color: "var(--text-3)", fontSize: 13 }}>Загрузка…</div>
+      ) : templates.length === 0 ? (
+        <div style={{ color: "var(--text-3)", fontSize: 13 }}>Шаблонов нет. Нажмите «Добавить».</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {templates.map(t => (
+            <div key={t.id} style={{ background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 4 }}>{t.name}</div>
+                <div style={{ fontSize: 12, color: "var(--text-2)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{t.text}</div>
+              </div>
+              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                <button className="btn-ghost" style={{ padding: "4px 8px" }} onClick={() => openEdit(t)} title="Редактировать"><Pencil size={12} /></button>
+                <button className="btn-danger" style={{ padding: "4px 8px" }} onClick={() => remove(t)} title="Удалить"><Trash2 size={12} /></button>
+              </div>
             </div>
           ))}
         </div>

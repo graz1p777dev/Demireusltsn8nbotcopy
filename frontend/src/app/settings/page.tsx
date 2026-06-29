@@ -1,6 +1,6 @@
-import { UsersPanel, PromptPanel, ManagersPanel, AiTestPanel, ChangelogPanel, SectionShell } from "@/components/dashboard";
+import { UsersPanel, PromptPanel, ManagersPanel, AiTestPanel, ChangelogPanel, TemplatesPanel, SectionShell } from "@/components/dashboard";
 import { AppShell } from "@/components/app-shell";
-import { Users, Bot, MessageCircle, FlaskConical, ScrollText } from "lucide-react";
+import { Users, Bot, MessageCircle, FlaskConical, ScrollText, BookOpen } from "lucide-react";
 
 export default function SettingsPage() {
   return (
@@ -10,6 +10,9 @@ export default function SettingsPage() {
       </SectionShell>
       <SectionShell id="prompt" title="Промпт бота" icon={<Bot size={14} />}>
         <PromptPanel />
+      </SectionShell>
+      <SectionShell id="templates" title="Шаблоны ответов" icon={<BookOpen size={14} />}>
+        <TemplatesPanel />
       </SectionShell>
       <SectionShell id="managers" title="Менеджеры Telegram" icon={<MessageCircle size={14} />}>
         <ManagersPanel />
