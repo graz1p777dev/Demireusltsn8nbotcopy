@@ -561,6 +561,91 @@ export function PromptPanel() {
 }
 
 
+export function BotMemoryPanel() {
+  const [memory, setMemory] = useState("");
+  const [original, setOriginal] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    apiGet<{ memory: string }>("/admin/bot-memory")
+      .then((d) => { setMemory(d.memory); setOriginal(d.memory); })
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await apiJson("/admin/bot-memory", "PATCH", { memory });
+      setOriginal(memory);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const PLACEHOLDER = `Примеры что можно добавить:
+
+Ассортимент:
+- Бренды: iUNIK, CLIV, Lagom, Cosrx, Beauty of Joseon
+- Категории: сыворотки, кремы, тонеры, солнцезащитные средства, маски
+- Нет инъекций, нет аппаратных процедур — только домашний уход
+
+Цены:
+- Сыворотки: от 2500 до 8000 сом
+- Кремы: от 3000 до 10000 сом
+- Консультация косметолога: бесплатно
+
+Доставка:
+- По Бишкеку: бесплатно от 3000 сом
+- Регионы: Кыргызпочта или СДЭК
+
+Особенности:
+- Все средства оригинальные, проверенные поставщики
+- Можно протестировать в магазине перед покупкой`;
+
+  return (
+    <section style={{ padding: "20px 24px" }}>
+      <p style={{ fontSize: 12, color: "var(--text-3)", margin: "0 0 14px" }}>
+        Информация о магазине которую бот использует при ответах: ассортимент, цены, доставка, бренды, особенности.
+        Бот будет ссылаться на эти данные когда клиент спрашивает о конкретных продуктах или услугах.
+      </p>
+      {loading ? (
+        <div style={{ color: "var(--text-3)", fontSize: 13 }}>Загрузка...</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <textarea
+            value={memory}
+            onChange={(e) => setMemory(e.target.value)}
+            placeholder={PLACEHOLDER}
+            rows={16}
+            style={{
+              width: "100%", background: "var(--bg-3)", border: "1px solid var(--border)",
+              color: "var(--text)", borderRadius: 8, padding: "10px 12px", fontSize: 13,
+              fontFamily: "var(--mono)", lineHeight: 1.6, resize: "vertical",
+              boxSizing: "border-box", outline: "none",
+            }}
+          />
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => setMemory(original)} className="btn-ghost"
+              style={{ padding: "7px 14px", fontSize: 12 }} disabled={memory === original}>
+              Отмена
+            </button>
+            <button onClick={save} className="btn-primary"
+              style={{ padding: "7px 18px", fontSize: 12 }}
+              disabled={saving || loading || memory === original}>
+              {saving ? "Сохранение..." : saved ? "✓ Сохранено" : "Сохранить"}
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+
 /* ── Logout Button ── */
 export function LogoutButton() {
   const router = useRouter();

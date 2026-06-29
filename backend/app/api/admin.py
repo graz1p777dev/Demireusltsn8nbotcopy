@@ -241,6 +241,27 @@ def update_bot_prompt(body: BotPromptUpdate, db: Session = Depends(get_db)) -> d
     return {"ok": True}
 
 
+class BotMemoryUpdate(BaseModel):
+    memory: str
+
+
+@router.get("/bot-memory")
+def get_bot_memory(db: Session = Depends(get_db)) -> dict:
+    row = db.scalar(select(Setting).where(Setting.key == "bot_memory"))
+    return {"memory": row.value if row else ""}
+
+
+@router.patch("/bot-memory")
+def update_bot_memory(body: BotMemoryUpdate, db: Session = Depends(get_db)) -> dict:
+    row = db.scalar(select(Setting).where(Setting.key == "bot_memory"))
+    if row:
+        row.value = body.memory
+    else:
+        db.add(Setting(key="bot_memory", value=body.memory, is_secret=False))
+    db.commit()
+    return {"ok": True}
+
+
 class AiTestRequest(BaseModel):
     message: str
     history: list[dict] = []  # [{"role": "user"|"assistant", "content": "..."}]
@@ -271,8 +292,11 @@ def ai_test(body: AiTestRequest, db: Session = Depends(get_db)) -> dict:
     ]
     dialogue.append({"role": "user", "content": body.message})
 
+    mem_row = db.scalar(select(Setting).where(Setting.key == "bot_memory"))
+    memory_context = mem_row.value if mem_row else None
+
     try:
-        result = generate_reply(dialogue, slot_context, system_prompt=system_prompt)
+        result = generate_reply(dialogue, slot_context, system_prompt=system_prompt, memory_context=memory_context)
         return {"ok": True, "reply": str(result.content), "tokens": result.total_tokens, "model": result.model}
     except Exception as e:
         return {"ok": False, "reply": f"Ошибка: {e}"}
