@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -480,6 +481,23 @@ def clear_claim(db, approval_id: int) -> None:
     _pop_session(db, f"claimed:{approval_id}")
 
 
+def _delete_overdue_reminder(db, approval_id: int) -> None:
+    """Delete overdue warning messages from all manager chats and remove the stored IDs."""
+    from app.models.entities import Setting
+    msg_key = f"overdue_msg:{approval_id}"
+    row = db.scalar(select(Setting).where(Setting.key == msg_key))
+    if not row:
+        return
+    try:
+        msg_ids: dict = json.loads(row.value)
+        for chat_id, message_id in msg_ids.items():
+            telegram.delete_message(chat_id, int(message_id))
+    except Exception:
+        pass
+    db.delete(row)
+    db.flush()
+
+
 def apply_ai_edited_reply(db, approval_id: int, manager_id: str, edit_prompt: str) -> ApprovalRequest | None:
     approval = db.get(ApprovalRequest, approval_id)
     if not approval:
@@ -531,6 +549,8 @@ def approve_request(db, approval_id: int, manager_id: str) -> bool:
     approval.approved_at = datetime.now(ZoneInfo(settings.timezone))
     db.commit()
     clear_claim(db, approval_id)
+    _delete_overdue_reminder(db, approval_id)
+    db.commit()
     move_lead_status(db, lead, settings.amocrm_status_on_approve, "approval_accepted")
 
     latest_user_message = db.scalar(
@@ -600,6 +620,8 @@ def reject_request(db, approval_id: int, manager_id: str) -> bool:
     approval.manager_telegram_id = manager_id
     db.commit()
     clear_claim(db, approval_id)
+    _delete_overdue_reminder(db, approval_id)
+    db.commit()
     lead = db.get(Lead, approval.lead_id)
     if lead:
         move_lead_status(db, lead, settings.amocrm_status_on_reject, "approval_rejected")

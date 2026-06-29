@@ -176,12 +176,20 @@ def check_overdue_approvals() -> dict:
                 f"AI-ответ №{approval.id:07d} ещё не обработан.\n"
                 f"Клиент ждёт — не забудьте принять или отклонить."
             )
-            telegram.send_text_all_managers(text)
+            msg_ids = telegram.send_text_all_managers(text)
 
             if last_reminded:
                 last_reminded.value = now.isoformat()
             else:
                 db.add(Setting(key=reminded_key, value=now.isoformat(), is_secret=False))
+
+            # Store message IDs so they can be deleted when manager responds
+            msg_key = f"overdue_msg:{approval.id}"
+            existing_msg = db.scalar(select(Setting).where(Setting.key == msg_key))
+            if existing_msg:
+                existing_msg.value = json.dumps(msg_ids)
+            else:
+                db.add(Setting(key=msg_key, value=json.dumps(msg_ids), is_secret=False))
             reminded += 1
 
         db.commit()
