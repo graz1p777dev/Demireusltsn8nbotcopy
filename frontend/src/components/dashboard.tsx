@@ -166,6 +166,7 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
   const [refreshing, setRefreshing] = useState(false);
   const [sending, setSending] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [showDetails, setShowDetails] = useState(false);
 
   const filtered = useMemo(
     () => conversations.filter((c) =>
@@ -379,8 +380,25 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
           </button>
         </div>
 
+        {/* Details toggle bar */}
+        <button
+          onClick={() => setShowDetails(p => !p)}
+          style={{
+            width: "100%", flexShrink: 0,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+            padding: "4px 0", border: "none", borderTop: "1px solid var(--border)",
+            background: "var(--bg-3)", color: "var(--text-3)", fontSize: 11,
+            cursor: "pointer", transition: "all 120ms",
+          }}
+          onMouseEnter={e => (e.currentTarget.style.color = "var(--text-2)")}
+          onMouseLeave={e => (e.currentTarget.style.color = "var(--text-3)")}
+        >
+          {showDetails ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          {showDetails ? "Скрыть детали" : "Детали диалога"}
+        </button>
+
         {/* Detail tabs */}
-        <div className="detail-tabs">
+        {showDetails && <div className="detail-tabs">
           <div className="detail-tab">
             <button className="collapsible-header" onClick={() => setCollapsed(p => ({ ...p, fields: !p.fields }))}>
               <span className="detail-tab-title" style={{ margin: 0 }}>Extracted fields</span>
@@ -412,10 +430,10 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
             ))}
             {!collapsed.memory && !detail?.memory?.length && <p className="muted">Пусто</p>}
           </div>
-        </div>
+        </div>}
 
         {/* OpenAI usage */}
-        <div className="data-section">
+        {showDetails && <div className="data-section">
           <button className="collapsible-header" onClick={() => setCollapsed(p => ({ ...p, usage: !p.usage }))}>
             <span className="data-section-title" style={{ margin: 0 }}>OpenAI Usage</span>
             {collapsed.usage ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
@@ -430,10 +448,10 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
             </div>
           ))}
           {!collapsed.usage && detail && !detail.usage.length && <p className="muted" style={{ fontSize: 12 }}>Нет данных</p>}
-        </div>
+        </div>}
 
         {/* Approvals */}
-        <div className="data-section">
+        {showDetails && <div className="data-section">
           <button className="collapsible-header" onClick={() => setCollapsed(p => ({ ...p, approvals: !p.approvals }))}>
             <span className="data-section-title" style={{ margin: 0 }}>Human Approvals</span>
             {collapsed.approvals ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
@@ -451,10 +469,10 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
             </div>
           ))}
           {!collapsed.approvals && detail && !detail.approvals.length && <p className="muted" style={{ fontSize: 12 }}>Нет заявок</p>}
-        </div>
+        </div>}
 
         {/* Training */}
-        <div className="data-section">
+        {showDetails && <div className="data-section">
           <button className="collapsible-header" onClick={() => setCollapsed(p => ({ ...p, training: !p.training }))}>
             <span className="data-section-title" style={{ margin: 0 }}>Training Examples</span>
             {collapsed.training ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
@@ -470,7 +488,7 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
             </div>
           ))}
           {!collapsed.training && detail && !detail.training_examples.length && <p className="muted" style={{ fontSize: 12 }}>Нет примеров</p>}
-        </div>
+        </div>}
       </>
     </ResizableGrid>
   );
