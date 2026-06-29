@@ -21,6 +21,7 @@ from app.tasks.pipeline import (
     pop_edit_prompt_msg,
     pop_edit_session,
     pop_note_session,
+    pop_translate_session,
     process_lead_buffer,
     reject_request,
     save_request,
@@ -29,6 +30,7 @@ from app.tasks.pipeline import (
     set_edit_prompt_msg,
     set_edit_session,
     set_note_session,
+    set_translate_session,
 )
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -296,22 +298,22 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
                 set_edit_prompt_msg(db, manager_id, mid)
             return {"ok": True, "action": action}
         if action == "translate":
+            set_translate_session(db, manager_id, approval_id)
             telegram.answer_callback(callback_id)
-            if approval:
-                from app.services.openai_service import ai_edit_reply
-                from app.tasks.pipeline import save_ai_usage
-                reply_text = approval.edited_reply or approval.ai_reply or ""
-                if reply_text:
-                    try:
-                        result = ai_edit_reply(
-                            reply_text,
-                            approval.client_message or "",
-                            "Переведи этот ответ на русский язык. Верни только перевод без пояснений.",
-                        )
-                        save_ai_usage(db, approval.lead_id, result)
-                        telegram.send_text(callback_chat_id, f"🌐 <b>Перевод ответа:</b>\n{result.content}")
-                    except Exception:
-                        telegram.send_text(callback_chat_id, "Ошибка перевода.")
+            prompt_text = f"🌐 Перевод ответа №{approval_id:07d}\n\nНа какой язык перевести?\n\nНапример: русский, кыргызский, английский"
+            resp: dict = {}
+            try:
+                resp = telegram.send_text(manager_id, prompt_text)
+            except Exception:
+                pass
+            if not resp.get("result"):
+                try:
+                    resp = telegram.send_text(callback_chat_id, prompt_text)
+                except Exception:
+                    pass
+            mid = resp.get("result", {}).get("message_id")
+            if mid:
+                set_edit_prompt_msg(db, manager_id, mid)
             return {"ok": True, "action": action}
         if action == "memory":
             telegram.answer_callback(callback_id)
@@ -425,6 +427,35 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
                 has_templates = bool(_load_templates(db))
                 telegram.edit_approval_card(approval, lead, has_templates=has_templates)
             return {"ok": True, "action": "edited"}
+
+        # Перевод ответа
+        translate_approval_id = pop_translate_session(db, manager_id)
+        if translate_approval_id and text:
+            prompt_mid = pop_edit_prompt_msg(db, manager_id)
+            if prompt_mid:
+                telegram.delete_message(manager_id, prompt_mid)
+            approval = db.get(ApprovalRequest, translate_approval_id)
+            if approval:
+                from app.services.openai_service import ai_edit_reply
+                from app.tasks.pipeline import save_ai_usage
+                reply_text = approval.edited_reply or approval.ai_reply or ""
+                try:
+                    result = ai_edit_reply(
+                        reply_text,
+                        approval.client_message or "",
+                        f"Переведи этот ответ на {text.strip()} язык. Сохраняй смысл и тон. Верни только переведённый текст.",
+                    )
+                    save_ai_usage(db, approval.lead_id, result)
+                    approval.edited_reply = result.content
+                    db.commit()
+                    db.refresh(approval)
+                    lead = db.get(Lead, approval.lead_id)
+                    if lead:
+                        has_templates = bool(_load_templates(db))
+                        telegram.edit_approval_card(approval, lead, has_templates=has_templates)
+                except Exception:
+                    telegram.send_text(callback_chat_id, "Ошибка перевода.")
+            return {"ok": True, "action": "translated"}
 
         # Заметка
         note_approval_id = pop_note_session(db, manager_id)
