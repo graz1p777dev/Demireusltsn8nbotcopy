@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-_PICTURE_RE = re.compile(r'\[picture\]\s*(https?://\S+)')
+_PICTURE_RE = re.compile(r'\[(?:picture|photo|image|media)\]\s*(https?://\S+)')
 
 
 def _fmt_phone(raw: str) -> str:

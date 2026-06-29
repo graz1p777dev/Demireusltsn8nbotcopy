@@ -48,8 +48,9 @@ def upsert_incoming(db: Session, incoming: IncomingMessage) -> tuple[Lead, Conve
         db.flush()
 
     text = incoming.text
-    if not text and incoming.attachment_link:
-        text = f"[{incoming.attachment_type or 'media'}] {incoming.attachment_link}"
+    photo_url = incoming.attachment_link or incoming.media or None
+    if not text and photo_url:
+        text = f"[{incoming.attachment_type or 'picture'}] {photo_url}"
 
     db.add(
         Message(
