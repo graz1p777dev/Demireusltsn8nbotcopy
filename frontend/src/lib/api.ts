@@ -16,7 +16,11 @@ export type Conversation = {
 };
 
 export async function apiGet<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+  const response = await fetch(`${API_BASE}${path}`, { cache: "no-store", redirect: "manual" });
+  if (response.type === "opaqueredirect" || response.status === 307 || response.status === 302) {
+    if (typeof window !== "undefined") window.location.href = "/login";
+    throw new Error("session_expired");
+  }
   if (!response.ok) throw new Error(`API ${response.status}`);
   return response.json();
 }
@@ -26,7 +30,12 @@ export async function apiJson<T>(path: string, method: string, body?: unknown): 
     method,
     headers: body !== undefined ? { "Content-Type": "application/json" } : {},
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    redirect: "manual",
   });
+  if (response.type === "opaqueredirect" || response.status === 307 || response.status === 302) {
+    if (typeof window !== "undefined") window.location.href = "/login";
+    throw new Error("session_expired");
+  }
   if (!response.ok) throw new Error(`API ${response.status}`);
   return response.json();
 }
