@@ -130,6 +130,7 @@ class AIExtractedFields(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id"), index=True)
     skin_problem: Mapped[list] = mapped_column(JSONB, default=list)
+    age: Mapped[str | None] = mapped_column(String(32))
     consultation_format: Mapped[str | None] = mapped_column(String(64))
     city: Mapped[str | None] = mapped_column(String(64))
     experience: Mapped[str | None] = mapped_column(String(64))

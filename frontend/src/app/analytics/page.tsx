@@ -9,6 +9,7 @@ type Analytics = {
   daily: { date: string; count: number }[];
   daily_tokens: { date: string; prompt_tokens: number; completion_tokens: number }[];
   top_problems: { problem: string; count: number }[];
+  age_by_problem: { problem: string; age: string; count: number }[];
   usage_by_purpose: {
     purpose: string; prompt_tokens: number; completion_tokens: number;
     total_tokens: number; total_cost: number; calls: number;
@@ -356,6 +357,63 @@ export default function AnalyticsPage() {
                 </div>
               </div>
             )}
+
+            {/* Age × Problem breakdown */}
+            {data.age_by_problem && data.age_by_problem.length > 0 && (() => {
+              // Build pivot: problems as rows, ages as columns
+              const problems = [...new Set(data.age_by_problem.map(r => r.problem))];
+              const ages = [...new Set(data.age_by_problem.map(r => r.age))].sort((a, b) => {
+                if (a === "неизвестно") return 1;
+                if (b === "неизвестно") return -1;
+                return parseInt(a) - parseInt(b);
+              });
+              const lookup: Record<string, Record<string, number>> = {};
+              for (const r of data.age_by_problem) {
+                if (!lookup[r.problem]) lookup[r.problem] = {};
+                lookup[r.problem][r.age] = (lookup[r.problem][r.age] || 0) + r.count;
+              }
+              const totals = problems.map(p => Object.values(lookup[p] || {}).reduce((s, v) => s + v, 0));
+              const sortedProblems = problems.map((p, i) => ({ p, t: totals[i] })).sort((a, b) => b.t - a.t).map(x => x.p);
+              return (
+                <div style={{ marginTop: 20 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    Возраст × Проблема
+                  </div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: "left", padding: "6px 8px", color: "var(--text-3)", fontWeight: 500, borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" }}>Проблема</th>
+                          {ages.map(age => (
+                            <th key={age} style={{ textAlign: "center", padding: "6px 8px", color: "var(--text-3)", fontWeight: 500, borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" }}>
+                              {age === "неизвестно" ? "—" : age + " л."}
+                            </th>
+                          ))}
+                          <th style={{ textAlign: "center", padding: "6px 8px", color: "var(--text-2)", fontWeight: 600, borderBottom: "1px solid var(--border)" }}>Всего</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedProblems.map((prob, i) => {
+                          const row = lookup[prob] || {};
+                          const total = Object.values(row).reduce((s, v) => s + v, 0);
+                          return (
+                            <tr key={prob} style={{ background: i % 2 === 0 ? "var(--bg-2)" : "transparent" }}>
+                              <td style={{ padding: "5px 8px", color: "var(--text)", whiteSpace: "nowrap" }}>{prob}</td>
+                              {ages.map(age => (
+                                <td key={age} style={{ textAlign: "center", padding: "5px 8px", color: row[age] ? "var(--text)" : "var(--text-3)" }}>
+                                  {row[age] || "·"}
+                                </td>
+                              ))}
+                              <td style={{ textAlign: "center", padding: "5px 8px", fontWeight: 600, color: "var(--primary)" }}>{total}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
 
           </div>
         )}

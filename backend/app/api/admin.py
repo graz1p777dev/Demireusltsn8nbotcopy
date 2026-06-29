@@ -366,11 +366,30 @@ def get_analytics(db: Session = Depends(get_db)) -> dict:
         for r in daily_tokens_rows
     ]
 
+    # Age × problem breakdown
+    age_rows = db.execute(text(
+        "SELECT skin_problem, age FROM ai_extracted_fields "
+        "WHERE skin_problem IS NOT NULL AND skin_problem != '[]'"
+    )).fetchall()
+    age_problem_counter: dict[tuple, int] = {}
+    for row in age_rows:
+        problems = row[0] if isinstance(row[0], list) else []
+        age_val = (row[1] or "").strip() or "неизвестно"
+        for p in problems:
+            if p:
+                key = (str(p), age_val)
+                age_problem_counter[key] = age_problem_counter.get(key, 0) + 1
+    age_by_problem = [
+        {"problem": k[0], "age": k[1], "count": v}
+        for k, v in sorted(age_problem_counter.items(), key=lambda x: -x[1])
+    ]
+
     return {
         "hourly": hourly_full,
         "daily": daily,
         "daily_tokens": daily_tokens,
         "top_problems": top_problems,
+        "age_by_problem": age_by_problem,
         "usage_by_purpose": usage_by_purpose,
         "stats": {
             "total_leads": total_leads,
