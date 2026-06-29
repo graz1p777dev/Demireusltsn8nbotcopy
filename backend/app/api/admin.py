@@ -28,6 +28,33 @@ from app.services import amocrm
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
+@router.get("/chat/{amocrm_lead_id}")
+def get_chat_history(amocrm_lead_id: str, db: Session = Depends(get_db)) -> dict:
+    lead = db.scalar(select(Lead).where(Lead.amocrm_lead_id == amocrm_lead_id))
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    messages = db.scalars(
+        select(Message).where(Message.lead_id == lead.id).order_by(Message.created_at)
+    ).all()
+    client = lead.client
+    return {
+        "lead_id": lead.amocrm_lead_id,
+        "client_name": client.name if client else None,
+        "client_phone": client.phone if client else None,
+        "amocrm_url": f"{app_settings.amocrm_base_url.rstrip('/')}/leads/detail/{lead.amocrm_lead_id}",
+        "messages": [
+            {
+                "id": m.id,
+                "role": m.role,
+                "text": m.text,
+                "status": m.status,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in messages
+        ],
+    }
+
+
 class ToggleAI(BaseModel):
     enabled: bool
 
