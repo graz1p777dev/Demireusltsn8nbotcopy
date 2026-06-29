@@ -228,6 +228,15 @@ class Setting(Base):
     )
 
 
+class Blacklist(Base):
+    __tablename__ = "blacklists"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    phone: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    reason: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ConsultationReminder(Base, TimestampMixin):
     """Tracks per-consultation reminder cards sent to Telegram managers."""
     __tablename__ = "consultation_reminders"

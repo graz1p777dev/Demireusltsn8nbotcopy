@@ -18,6 +18,8 @@ from app.models.entities import (
     AIExtractedFields,
     AIUsage,
     ApprovalRequest,
+    Blacklist,
+    Client,
     ClientMemory,
     ConsultationSlot,
     Lead,
@@ -664,3 +666,151 @@ def export_leads(db: Session = Depends(get_db)) -> StreamingResponse:
         media_type="text/csv; charset=utf-8-sig",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ── Blacklist ─────────────────────────────────────────────────────────────────
+
+class BlacklistPayload(BaseModel):
+    phone: str
+    reason: str | None = None
+
+
+@router.get("/blacklist")
+def list_blacklist(db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.scalars(select(Blacklist).order_by(Blacklist.created_at.desc())).all()
+    return [{"id": r.id, "phone": r.phone, "reason": r.reason, "created_at": str(r.created_at)[:19]} for r in rows]
+
+
+@router.post("/blacklist")
+def add_to_blacklist(payload: BlacklistPayload, db: Session = Depends(get_db)) -> dict:
+    phone = payload.phone.strip()
+    existing = db.scalar(select(Blacklist).where(Blacklist.phone == phone))
+    if existing:
+        raise HTTPException(400, "Номер уже в черном списке")
+    entry = Blacklist(phone=phone, reason=payload.reason)
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return {"id": entry.id, "phone": entry.phone, "reason": entry.reason}
+
+
+@router.delete("/blacklist/{entry_id}")
+def remove_from_blacklist(entry_id: int, db: Session = Depends(get_db)) -> dict:
+    entry = db.get(Blacklist, entry_id)
+    if not entry:
+        raise HTTPException(404, "Не найдено")
+    db.delete(entry)
+    db.commit()
+    return {"ok": True}
+
+
+# ── Stop Words ────────────────────────────────────────────────────────────────
+
+class StopWordsPayload(BaseModel):
+    words: list[str]
+
+
+@router.get("/stop-words")
+def get_stop_words(db: Session = Depends(get_db)) -> dict:
+    setting = db.scalar(select(Setting).where(Setting.key == "stop_words"))
+    words = [w.strip() for w in setting.value.split(",") if w.strip()] if setting else []
+    return {"words": words}
+
+
+@router.put("/stop-words")
+def update_stop_words(payload: StopWordsPayload, db: Session = Depends(get_db)) -> dict:
+    value = ", ".join(w.strip().lower() for w in payload.words if w.strip())
+    setting = db.scalar(select(Setting).where(Setting.key == "stop_words"))
+    if setting:
+        setting.value = value
+    else:
+        db.add(Setting(key="stop_words", value=value))
+    db.commit()
+    return {"words": [w.strip() for w in value.split(",") if w.strip()]}
+
+
+# ── Daily Report ──────────────────────────────────────────────────────────────
+
+@router.get("/reports/daily")
+def daily_report(days: int = 30, db: Session = Depends(get_db)) -> list[dict]:
+    tz = app_settings.timezone
+    rows = db.execute(text(f"""
+        SELECT
+            DATE(created_at AT TIME ZONE '{tz}') AS day,
+            COUNT(*) FILTER (WHERE status IN ('pending','edited','stop_word')) AS new_count,
+            COUNT(*) FILTER (WHERE status = 'approved') AS approved,
+            COUNT(*) FILTER (WHERE status = 'rejected') AS rejected,
+            COUNT(*) FILTER (WHERE status = 'saved') AS saved
+        FROM approval_requests
+        WHERE created_at >= NOW() - INTERVAL '{days} days'
+        GROUP BY day
+        ORDER BY day DESC
+    """)).fetchall()
+    return [
+        {"day": str(r[0]), "new": int(r[1]), "approved": int(r[2]), "rejected": int(r[3]), "saved": int(r[4])}
+        for r in rows
+    ]
+
+
+# ── Analytics: Conversion Funnel ──────────────────────────────────────────────
+
+@router.get("/analytics/funnel")
+def analytics_funnel(db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.execute(text("""
+        SELECT amocrm_stage_name, COUNT(*) AS cnt
+        FROM approval_requests
+        WHERE amocrm_stage_name IS NOT NULL
+        GROUP BY amocrm_stage_name
+        ORDER BY cnt DESC
+    """)).fetchall()
+    total = sum(int(r[1]) for r in rows) or 1
+    return [{"stage": r[0], "count": int(r[1]), "pct": round(int(r[1]) * 100 / total)} for r in rows]
+
+
+# ── Analytics: Manager Efficiency ─────────────────────────────────────────────
+
+@router.get("/analytics/managers")
+def analytics_managers(db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.execute(text("""
+        SELECT
+            response->>'manager_id' AS manager_id,
+            COUNT(*) FILTER (WHERE action = 'approval.approved') AS approved,
+            COUNT(*) FILTER (WHERE action = 'approval.rejected') AS rejected,
+            COUNT(*) FILTER (WHERE action = 'approval.edited') AS edited,
+            COUNT(*) FILTER (WHERE action = 'approval.saved') AS saved
+        FROM action_logs
+        WHERE action IN ('approval.approved','approval.rejected','approval.edited','approval.saved')
+          AND response->>'manager_id' IS NOT NULL
+        GROUP BY response->>'manager_id'
+        ORDER BY approved DESC
+    """)).fetchall()
+    return [
+        {"manager_id": r[0], "approved": int(r[1]), "rejected": int(r[2]), "edited": int(r[3]), "saved": int(r[4])}
+        for r in rows
+    ]
+
+
+# ── Analytics: Best AI Replies ────────────────────────────────────────────────
+
+@router.get("/analytics/best-replies")
+def analytics_best_replies(limit: int = 20, db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.scalars(
+        select(ApprovalRequest)
+        .where(
+            ApprovalRequest.status == "approved",
+            ApprovalRequest.edited_reply.is_(None),
+        )
+        .order_by(ApprovalRequest.created_at.desc())
+        .limit(limit)
+    ).all()
+    result = []
+    for a in rows:
+        lead = db.get(Lead, a.lead_id)
+        result.append({
+            "id": a.id,
+            "lead_id": lead.amocrm_lead_id if lead else "",
+            "client_message": a.client_message[:200] if a.client_message else "",
+            "ai_reply": a.ai_reply[:300] if a.ai_reply else "",
+            "created_at": str(a.created_at)[:19],
+        })
+    return result

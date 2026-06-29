@@ -145,6 +145,7 @@ def approval_card(
     messages_count: int = 1,
     last_message_time: str | None = None,
     claimed_by_name: str | None = None,
+    repeat_count: int = 0,
 ) -> str:
     client_name = lead.client.name if lead.client else "Без имени"
     contact = lead.client.phone if lead.client and lead.client.phone else lead.contact_id or "-"
@@ -164,12 +165,20 @@ def approval_card(
         translation_block += "\n"
     time_line = f"🕐 <b>Написал:</b> {escape(last_message_time)}\n" if last_message_time else ""
     claim_line = f"⏳ <b>Редактирует:</b> {escape(claimed_by_name)}\n" if claimed_by_name else ""
-    text = (
+    stop_word = (approval.extracted_fields or {}).get("_stop_word", "")
+    header = (
+        f"⛔ <b>СТОП-СЛОВО: {escape(stop_word)} · №{approval.id:07d}</b>\n"
+        if stop_word else
         f"🟣 <b>Новый AI-ответ №{approval.id:07d}</b>\n"
+    )
+    repeat_line = f"🔄 <b>Повторный клиент · {repeat_count} обращений</b>\n" if repeat_count > 1 else ""
+    text = (
+        header
         + claim_line
         + "\n"
         f"👤 <b>Клиент:</b> {escape(client_name or 'Без имени')}\n"
-        f"📞 <b>Контакт:</b> {escape(str(contact))}\n"
+        + repeat_line
+        + f"📞 <b>Контакт:</b> {escape(str(contact))}\n"
         f"🧾 <b>Lead ID:</b> {escape(lead.amocrm_lead_id)}\n"
         f"📍 <b>Этап amoCRM:</b> {escape(approval.amocrm_stage_name or str(approval.amocrm_status_id or 'неизвестно'))}\n"
         f"🔥 <b>Score:</b> {score}%\n"
@@ -196,8 +205,9 @@ def approval_card(
     if decision:
         now = datetime.now(ZoneInfo(settings.timezone)).strftime("%d.%m.%Y %H:%M")
         text += f"\n\n━━━━━━━━━━━━━━━━━━━━\n{decision} · {now}"
-        text += f"\n🔗 <a href=\"{lead_url(lead)}\">Открыть лид в amoCRM</a>"
-    text += f"\n\n<a href=\"{settings.frontend_url}\">CRM</a>"
+        text += f"\n🔗 <a href=\"{lead_url(lead)}\">Открыть в amoCRM</a>"
+    crm_lead_url = f"{settings.frontend_url}/chat/{lead.amocrm_lead_id}"
+    text += f"\n\n<a href=\"{crm_lead_url}\">Открыть в CRM</a>"
     return text
 
 
@@ -221,8 +231,12 @@ def approval_keyboard(approval_id: int, lead: Lead, has_templates: bool = False)
         ],
         [{"text": "📅 Предложить консультацию", "callback_data": f"consult:{approval_id}"}],
         [{"text": "📂 Переместить на этап", "callback_data": f"move_stage:{approval_id}"}],
+        [{"text": "🌐 Перевести ответ", "callback_data": f"translate:{approval_id}"}],
         [{"text": "📝 Заметка", "callback_data": f"note:{approval_id}"}],
-        [{"text": "📋 Открыть лид", "url": lead_url(lead)}],
+        [
+            {"text": "📋 Открыть в CRM", "url": f"{settings.frontend_url}/chat/{lead.amocrm_lead_id}"},
+            {"text": "🔗 amoCRM", "url": lead_url(lead)},
+        ],
     ]
     return {"inline_keyboard": rows}
 
@@ -336,10 +350,11 @@ def send_approval_card(
     extra_chat_ids: list[str] | None = None,
     last_message_time: str | None = None,
     has_templates: bool = False,
+    repeat_count: int = 0,
 ) -> dict:
     if not telegram_enabled():
         return {"skipped": True, "reason": "telegram not configured"}
-    card_text = approval_card(approval, lead, messages_count=messages_count, last_message_time=last_message_time)
+    card_text = approval_card(approval, lead, messages_count=messages_count, last_message_time=last_message_time, repeat_count=repeat_count)
     keyboard = approval_keyboard(approval.id, lead, has_templates=has_templates)
     message_ids: dict[str, str] = {}
     last_response: dict = {}
