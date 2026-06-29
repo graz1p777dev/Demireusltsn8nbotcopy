@@ -163,6 +163,7 @@ def approval_card(
         now = datetime.now(ZoneInfo(settings.timezone)).strftime("%d.%m.%Y %H:%M")
         text += f"\n\n━━━━━━━━━━━━━━━━━━━━\n{decision} · {now}"
         text += f"\n🔗 <a href=\"{lead_url(lead)}\">Открыть лид в amoCRM</a>"
+    text += f"\n\n<a href=\"{settings.frontend_url}\">CRM</a>"
     return text
 
 
