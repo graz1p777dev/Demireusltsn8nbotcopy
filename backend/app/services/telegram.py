@@ -114,6 +114,28 @@ def memory_lines(extracted: dict | None) -> str:
     )
 
 
+def _build_hashtags(contact: str, extracted: dict | None) -> str:
+    tags: list[str] = []
+    # Phone tag — digits only
+    phone_digits = re.sub(r"\D", "", str(contact))
+    if len(phone_digits) >= 7:
+        tags.append(f"#{phone_digits}")
+    # Skin problem tags
+    for problem in (extracted or {}).get("skin_problem") or []:
+        slug = re.sub(r"\s+", "_", problem.strip().lower())
+        slug = re.sub(r"[^\w]", "", slug, flags=re.UNICODE)
+        if slug:
+            tags.append(f"#{slug}")
+    # City tag
+    city = (extracted or {}).get("city")
+    if city:
+        slug = re.sub(r"\s+", "_", str(city).strip().lower())
+        slug = re.sub(r"[^\w]", "", slug, flags=re.UNICODE)
+        if slug:
+            tags.append(f"#{slug}")
+    return " ".join(tags)
+
+
 def approval_card(
     approval: ApprovalRequest,
     lead: Lead,
@@ -163,6 +185,9 @@ def approval_card(
         "- обновить поля сделки\n"
         "- сохранить исправление менеджера для улучшения бота"
     )
+    hashtags = _build_hashtags(contact, approval.extracted_fields)
+    if hashtags:
+        text += f"\n\n{hashtags}"
     if decision:
         now = datetime.now(ZoneInfo(settings.timezone)).strftime("%d.%m.%Y %H:%M")
         text += f"\n\n━━━━━━━━━━━━━━━━━━━━\n{decision} · {now}"
