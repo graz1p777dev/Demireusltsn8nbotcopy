@@ -31,8 +31,14 @@ class Settings(BaseSettings):
     openai_input_cost_sales: float = 5.0
     openai_output_cost_sales: float = 30.0
     deepseek_api_key: str = ""
-    openai_input_cost_per_1m_tokens: float = 0
-    openai_output_cost_per_1m_tokens: float = 0
+    deepseek_input_cost_per_1m: float = 0.07    # deepseek-chat v3 pricing
+    deepseek_output_cost_per_1m: float = 1.10
+    # Extractor/utility model pricing (gpt-4.1-mini or similar)
+    openai_input_cost_extractor: float = 0.40
+    openai_output_cost_extractor: float = 1.60
+    # Legacy fallback — kept for backward compat, now equals extractor pricing
+    openai_input_cost_per_1m_tokens: float = 0.40
+    openai_output_cost_per_1m_tokens: float = 1.60
 
     amocrm_base_url: str = "https://demicosmetics1.amocrm.ru"
     amocrm_access_token: str = ""
