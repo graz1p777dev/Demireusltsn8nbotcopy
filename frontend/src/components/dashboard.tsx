@@ -702,6 +702,176 @@ export function UsersPanel() {
   );
 }
 
+/* ── Changelog Panel ── */
+type ChangeEntry = { date: string; tag: "feature" | "fix" | "improve" | "delete"; text: string };
+type ChangeGroup = { version: string; date: string; entries: ChangeEntry[] };
+
+const CHANGELOG: ChangeGroup[] = [
+  {
+    version: "1.10",
+    date: "29.06.2026",
+    entries: [
+      { date: "29.06.2026", tag: "feature", text: "История чата: страница /chat/{lead_id} с пузырьками, ссылка в Telegram карточке" },
+      { date: "29.06.2026", tag: "feature", text: "Тест ИИ бота в настройках — чат-интерфейс с текущим промптом, счётчик токенов" },
+      { date: "29.06.2026", tag: "feature", text: "Tooltip на поле Telegram Chat ID: инструкция как узнать ID через @userinfobot" },
+      { date: "29.06.2026", tag: "improve", text: "Новый домен CRM: demiresults.alihan-torebekov.kg, API: api-demiresults.alihan-torebekov.kg" },
+      { date: "29.06.2026", tag: "improve", text: "Сообщение редакта удаляется после ответа менеджера (✏️ Редакт вручную / 🤖 AI редакт)" },
+      { date: "29.06.2026", tag: "improve", text: "В карточке и промпте редакта показывается номер ответа №0000042" },
+      { date: "29.06.2026", tag: "delete", text: "Удалён bot-test/ и мёртвый код _setup_crm_users_sync из main.py" },
+      { date: "29.06.2026", tag: "improve", text: "Google Sheets: retry через tenacity (3 попытки, exponential backoff)" },
+    ],
+  },
+  {
+    version: "1.9",
+    date: "20–22.06.2026",
+    entries: [
+      { date: "20.06.2026", tag: "feature", text: "Система напоминаний о консультациях: ежедневно в 10:00 Бишкек через Celery Beat" },
+      { date: "20.06.2026", tag: "feature", text: "Кнопки ✅ Пришёл / ❌ Не пришёл в Telegram — отмечают визит в Google Sheets" },
+      { date: "20.06.2026", tag: "feature", text: "Команда /consult — список консультаций на сегодня прямо в Telegram" },
+      { date: "20.06.2026", tag: "feature", text: "Google Sheets: 14 колонок, автоматическое создание листов по месяцам" },
+      { date: "20.06.2026", tag: "feature", text: "amoCRM ИИ Агент: автоматическое назначение ответственным при смене статуса лида" },
+      { date: "20.06.2026", tag: "fix", text: "Worker Railway: добавлен минимальный HTTP-сервер чтобы обойти healthcheck" },
+    ],
+  },
+  {
+    version: "1.8",
+    date: "10–15.06.2026",
+    entries: [
+      { date: "15.06.2026", tag: "improve", text: "Время последнего сообщения клиента в Telegram карточке" },
+      { date: "15.06.2026", tag: "fix", text: "Ссылка на лид amoCRM остаётся в карточке после принятия решения" },
+      { date: "10.06.2026", tag: "improve", text: "Бот знает рабочие часы Бишкека и не предлагает запись в нерабочее время" },
+      { date: "10.06.2026", tag: "improve", text: "Контекст времени (Бишкек UTC+6) вшит в каждый AI-запрос" },
+      { date: "10.06.2026", tag: "fix", text: "Определение языка клиента: AI вместо кириллической эвристики" },
+    ],
+  },
+  {
+    version: "1.7",
+    date: "01–09.06.2026",
+    entries: [
+      { date: "05.06.2026", tag: "feature", text: "Страница консультаций с календарём слотов" },
+      { date: "05.06.2026", tag: "feature", text: "Менеджеры Telegram: управление через CRM вместо только env-переменных" },
+      { date: "05.06.2026", tag: "feature", text: "AI-переводы: переводы сообщений клиента и ответа бота в карточке" },
+      { date: "01.06.2026", tag: "feature", text: "Расширенная аналитика: почасовая активность, топ проблем кожи, объём по дням" },
+      { date: "01.06.2026", tag: "improve", text: "Обновление всех Telegram карточек при решении менеджера" },
+    ],
+  },
+  {
+    version: "1.6",
+    date: "20–31.05.2026",
+    entries: [
+      { date: "28.05.2026", tag: "feature", text: "Конспект диалога от DeepSeek-гиперсupervisor в Telegram карточке" },
+      { date: "28.05.2026", tag: "feature", text: "Динамический Score клиента (0–100%) в карточке" },
+      { date: "25.05.2026", tag: "feature", text: "AI-редактор ответа: промпт «сделай короче», «добавь про акцию» и т.д." },
+      { date: "20.05.2026", tag: "feature", text: "Кнопка «Предложить консультацию» в Telegram — переписывает ответ через AI" },
+      { date: "20.05.2026", tag: "feature", text: "Кнопка «Переместить на этап» в Telegram с меню этапов amoCRM" },
+    ],
+  },
+  {
+    version: "1.5",
+    date: "10–19.05.2026",
+    entries: [
+      { date: "15.05.2026", tag: "feature", text: "Бот отвечает на языке клиента (кыргызский, казахский, английский, узбекский и др.)" },
+      { date: "15.05.2026", tag: "feature", text: "Ограничение менеджеров: Telegram карточки только для разрешённых chat_id" },
+      { date: "10.05.2026", tag: "improve", text: "Контекст диалога расширен до 20 последних сообщений" },
+      { date: "10.05.2026", tag: "fix", text: "Бот перестал повторять приветствие в продолжающемся диалоге" },
+    ],
+  },
+  {
+    version: "1.4",
+    date: "01–09.05.2026",
+    entries: [
+      { date: "05.05.2026", tag: "feature", text: "Поддержка фото: анализ кожи клиента по фотографии через GPT-4o Vision" },
+      { date: "05.05.2026", tag: "feature", text: "Воронка консультации: прогревающие вопросы + кнопка записи" },
+      { date: "01.05.2026", tag: "feature", text: "Редактор промпта бота прямо в CRM" },
+      { date: "01.05.2026", tag: "improve", text: "Светлая тема CRM: белый фон, шрифт Inter, рефакторинг UI" },
+    ],
+  },
+  {
+    version: "1.3",
+    date: "20–30.04.2026",
+    entries: [
+      { date: "25.04.2026", tag: "feature", text: "CRM-авторизация: логин/пароль, управление пользователями, JWT" },
+      { date: "25.04.2026", tag: "feature", text: "Страница настроек: промпт, менеджеры, пользователи CRM" },
+      { date: "20.04.2026", tag: "feature", text: "Перетягиваемый разделитель между списком диалогов и чатом" },
+    ],
+  },
+  {
+    version: "1.2",
+    date: "10–19.04.2026",
+    entries: [
+      { date: "15.04.2026", tag: "feature", text: "amoCRM: смена этапа лида при одобрении/отклонении ответа" },
+      { date: "15.04.2026", tag: "feature", text: "Отправка карточек одобрения нескольким менеджерам Telegram" },
+      { date: "10.04.2026", tag: "fix", text: "amoCRM: тип crm_entity должен быть числовым (2), не строкой" },
+    ],
+  },
+  {
+    version: "1.1",
+    date: "01–09.04.2026",
+    entries: [
+      { date: "05.04.2026", tag: "feature", text: "Деплой на Railway (бэкенд + worker) и Vercel (фронтенд)" },
+      { date: "05.04.2026", tag: "feature", text: "Telegram бот: карточки одобрения, кнопки Принять/Отклонить/Изменить/Сохранить" },
+      { date: "01.04.2026", tag: "feature", text: "Интеграция amoCRM: webhook входящих сообщений, отправка ответов" },
+    ],
+  },
+  {
+    version: "1.0",
+    date: "19.03.2026",
+    entries: [
+      { date: "19.03.2026", tag: "feature", text: "Первоначальный запуск: GPT-4o Mini бот, FastAPI бэкенд, Next.js CRM, PostgreSQL + Redis" },
+    ],
+  },
+];
+
+const TAG_STYLE: Record<ChangeEntry["tag"], { label: string; color: string; bg: string }> = {
+  feature: { label: "новое",    color: "#34d399", bg: "rgba(52,211,153,.12)" },
+  improve: { label: "улучшено", color: "#60a5fa", bg: "rgba(96,165,250,.12)" },
+  fix:     { label: "фикс",     color: "#fbbf24", bg: "rgba(251,191,36,.12)" },
+  delete:  { label: "удалено",  color: "#f87171", bg: "rgba(248,113,113,.12)" },
+};
+
+export function ChangelogPanel() {
+  return (
+    <section style={{ padding: "16px 20px" }}>
+      <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 20 }}>
+        Полная история изменений проекта Demi Results AI Bot.
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        {CHANGELOG.map(group => (
+          <div key={group.version}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10 }}>
+              <span style={{
+                fontWeight: 700, fontSize: 13, color: "var(--text)",
+                background: "var(--bg-3)", border: "1px solid var(--border)",
+                borderRadius: 6, padding: "2px 9px",
+              }}>
+                v{group.version}
+              </span>
+              <span style={{ fontSize: 12, color: "var(--text-3)" }}>{group.date}</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 4 }}>
+              {group.entries.map((e, i) => {
+                const ts = TAG_STYLE[e.tag];
+                return (
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                    <span style={{
+                      fontSize: 10, fontWeight: 600, color: ts.color,
+                      background: ts.bg, borderRadius: 4, padding: "2px 6px",
+                      whiteSpace: "nowrap", marginTop: 1, flexShrink: 0,
+                    }}>
+                      {ts.label}
+                    </span>
+                    <span style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.5 }}>{e.text}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /* ── AI Test Panel ── */
 type ChatMsg = { role: "user" | "assistant"; content: string; tokens?: number };
 

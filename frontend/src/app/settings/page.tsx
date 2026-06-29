@@ -1,6 +1,6 @@
-import { UsersPanel, PromptPanel, ManagersPanel, AiTestPanel, SectionShell } from "@/components/dashboard";
+import { UsersPanel, PromptPanel, ManagersPanel, AiTestPanel, ChangelogPanel, SectionShell } from "@/components/dashboard";
 import { AppShell } from "@/components/app-shell";
-import { Users, Bot, MessageCircle, FlaskConical } from "lucide-react";
+import { Users, Bot, MessageCircle, FlaskConical, ScrollText } from "lucide-react";
 
 export default function SettingsPage() {
   return (
@@ -16,6 +16,9 @@ export default function SettingsPage() {
       </SectionShell>
       <SectionShell id="users" title="Пользователи CRM" icon={<Users size={14} />}>
         <UsersPanel />
+      </SectionShell>
+      <SectionShell id="changelog" title="История изменений" icon={<ScrollText size={14} />} defaultOpen={false}>
+        <ChangelogPanel />
       </SectionShell>
     </AppShell>
   );
