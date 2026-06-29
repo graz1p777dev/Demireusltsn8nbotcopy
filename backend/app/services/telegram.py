@@ -9,6 +9,21 @@ import httpx
 
 _PICTURE_RE = re.compile(r'\[picture\]\s*(https?://\S+)')
 
+
+def _fmt_phone(raw: str) -> str:
+    """Format a raw phone string to +996 XXX XXX XXX style."""
+    digits = re.sub(r"\D", "", raw)
+    if not digits:
+        return raw
+    # Ensure leading +
+    if digits.startswith("996") and len(digits) == 12:
+        return f"+{digits[:3]} {digits[3:6]} {digits[6:9]} {digits[9:]}"
+    if digits.startswith("7") and len(digits) == 11:
+        return f"+{digits[0]} {digits[1:4]} {digits[4:7]} {digits[7:]}"
+    if not digits.startswith("+") and len(digits) >= 10:
+        return f"+{digits}"
+    return raw
+
 from app.core.config import settings
 from app.models.entities import ApprovalRequest, Lead
 
@@ -153,10 +168,11 @@ def approval_card(
     _name_is_phone = bool(_name_digits) and len(_name_digits) >= 9 and _name_digits == re.sub(r"\s", "", raw_name or "")
     if _name_is_phone:
         client_name = "Без имени"
-        contact = raw_name
+        contact = _fmt_phone(raw_name)
     else:
         client_name = raw_name or "Без имени"
-        contact = (lead.client.phone if lead.client and lead.client.phone else None) or lead.contact_id or "-"
+        raw_contact = (lead.client.phone if lead.client and lead.client.phone else None) or lead.contact_id or "-"
+        contact = _fmt_phone(raw_contact) if re.sub(r"\D", "", raw_contact) else raw_contact
     score = calc_score(approval.extracted_fields, messages_count)
     reply = approval.edited_reply or approval.ai_reply
     summary_block = (
