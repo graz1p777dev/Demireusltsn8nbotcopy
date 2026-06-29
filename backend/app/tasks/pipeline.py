@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -149,8 +150,21 @@ def apply_sales_stage_from_extracted(db, lead: Lead, extracted: dict) -> None:
         move_lead_status(db, lead, settings.amocrm_status_qualified, "lead_card_filled")
 
 
+def _get_client_phone(lead: Lead) -> str | None:
+    """Returns client phone from client.phone, or from client.name if it looks like a number."""
+    if not lead.client:
+        return None
+    if lead.client.phone:
+        return lead.client.phone
+    name = lead.client.name or ""
+    digits = re.sub(r"\D", "", name)
+    if digits and len(digits) >= 9 and digits == re.sub(r"\s", "", name):
+        return name
+    return None
+
+
 def _is_blacklisted(db, lead: Lead) -> bool:
-    phone = lead.client.phone if lead.client else None
+    phone = _get_client_phone(lead)
     if not phone:
         return False
     return db.scalar(select(Blacklist).where(Blacklist.phone == phone)) is not None
@@ -170,14 +184,14 @@ def _check_stop_words(db, text: str) -> str:
 
 def _count_repeat_leads(db, lead: Lead) -> int:
     """Returns total lead count for this client's phone number."""
-    phone = lead.client.phone if lead.client else None
+    phone = _get_client_phone(lead)
     if not phone:
         return 1
     from sqlalchemy import func as sqlfunc
     count = db.scalar(
         select(sqlfunc.count(Lead.id))
         .join(Client, Lead.client_id == Client.id)
-        .where(Client.phone == phone)
+        .where((Client.phone == phone) | (Client.name == phone))
     )
     return count or 1
 
@@ -219,7 +233,7 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         # Blacklist check
         if _is_blacklisted(db, lead):
             _mark_buffers_processed(db, buffers)
-            log_action(db, lead.id, "pipeline.blacklisted", "skipped", {"phone": lead.client.phone if lead.client else None})
+            log_action(db, lead.id, "pipeline.blacklisted", "skipped", {"phone": _get_client_phone(lead)})
             return
 
         all_messages = db.scalars(

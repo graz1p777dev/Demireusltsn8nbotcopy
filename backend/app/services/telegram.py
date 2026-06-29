@@ -147,8 +147,16 @@ def approval_card(
     claimed_by_name: str | None = None,
     repeat_count: int = 0,
 ) -> str:
-    client_name = lead.client.name if lead.client else "Без имени"
-    contact = lead.client.phone if lead.client and lead.client.phone else lead.contact_id or "-"
+    raw_name = lead.client.name if lead.client else ""
+    # amoCRM sometimes sends phone number as author name when no real name is set
+    _name_digits = re.sub(r"\D", "", raw_name or "")
+    _name_is_phone = bool(_name_digits) and len(_name_digits) >= 9 and _name_digits == re.sub(r"\s", "", raw_name or "")
+    if _name_is_phone:
+        client_name = "Без имени"
+        contact = raw_name
+    else:
+        client_name = raw_name or "Без имени"
+        contact = (lead.client.phone if lead.client and lead.client.phone else None) or lead.contact_id or "-"
     score = calc_score(approval.extracted_fields, messages_count)
     reply = approval.edited_reply or approval.ai_reply
     summary_block = (
