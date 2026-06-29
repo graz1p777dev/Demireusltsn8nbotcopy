@@ -1,10 +1,13 @@
 import json
 import logging
+import re
 from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
 
 import httpx
+
+_PICTURE_RE = re.compile(r'\[picture\]\s*(https?://\S+)')
 
 from app.core.config import settings
 from app.models.entities import ApprovalRequest, Lead
@@ -229,6 +232,36 @@ def delete_message(chat_id: str | int, message_id: int) -> None:
         client.post(_api_url("deleteMessage"), json={"chat_id": chat_id, "message_id": message_id})
 
 
+def _forward_client_photos(client_message: str, chat_ids: list[str]) -> None:
+    """Download [picture] attachments from amoCRM and send them to managers via Telegram."""
+    urls = _PICTURE_RE.findall(client_message)
+    if not urls or not settings.telegram_bot_token:
+        return
+    auth_headers = {}
+    if settings.amocrm_access_token:
+        auth_headers["Authorization"] = f"Bearer {settings.amocrm_access_token}"
+    with httpx.Client(timeout=30, follow_redirects=True) as http:
+        for url in urls[:5]:  # cap at 5 photos
+            try:
+                img = http.get(url, headers=auth_headers)
+                if not img.is_success:
+                    _log.warning("photo download failed url=%.80s status=%s", url, img.status_code)
+                    continue
+                content_type = img.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+                ext = "jpg" if "jpeg" in content_type else content_type.split("/")[-1]
+                for chat_id in chat_ids:
+                    try:
+                        http.post(
+                            _api_url("sendPhoto"),
+                            files={"photo": (f"photo.{ext}", img.content, content_type)},
+                            data={"chat_id": chat_id},
+                        )
+                    except Exception as exc:
+                        _log.error("sendPhoto error chat_id=%s: %s", chat_id, exc)
+            except Exception as exc:
+                _log.error("photo download error url=%.80s: %s", url, exc)
+
+
 def send_approval_card(
     approval: ApprovalRequest,
     lead: Lead,
@@ -267,6 +300,9 @@ def send_approval_card(
             except Exception as exc:
                 _log.error("telegram send error chat_id=%s: %s", chat_id, exc)
     last_response["_message_ids"] = json.dumps(message_ids)
+    # Send attached photos after the text card
+    if approval.client_message:
+        _forward_client_photos(approval.client_message, list(_all_manager_chat_ids(extra_chat_ids)))
     return last_response
 
 
