@@ -369,7 +369,7 @@ def ai_edit_reply(original_reply: str, client_message: str, edit_prompt: str) ->
         f"Инструкция по изменению:\n{edit_prompt}"
     )
     response = _client().chat.completions.create(
-        model=settings.openai_model,
+        model=settings.openai_model_sales,
         temperature=0.4,
         messages=[
             {"role": "system", "content": system},
@@ -379,10 +379,12 @@ def ai_edit_reply(original_reply: str, client_message: str, edit_prompt: str) ->
     latency_ms = int((perf_counter() - started) * 1000)
     return _result(
         content=(response.choices[0].message.content or "").strip(),
-        model=settings.openai_model,
+        model=settings.openai_model_sales,
         purpose="ai_edit",
         usage=_usage_payload(response),
         latency_ms=latency_ms,
+        input_cost_per_1m=settings.openai_input_cost_sales,
+        output_cost_per_1m=settings.openai_output_cost_sales,
     )
 
 

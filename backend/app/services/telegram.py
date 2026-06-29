@@ -190,6 +190,9 @@ def approval_card(
     hashtags = _build_hashtags(contact, approval.extracted_fields)
     if hashtags:
         text += f"\n\n{hashtags}"
+    note = (approval.extracted_fields or {}).get("_note", "").strip() if approval.extracted_fields else ""
+    if note:
+        text += f"\n\n📝 <b>Заметка:</b> {escape(note)}"
     if decision:
         now = datetime.now(ZoneInfo(settings.timezone)).strftime("%d.%m.%Y %H:%M")
         text += f"\n\n━━━━━━━━━━━━━━━━━━━━\n{decision} · {now}"
@@ -218,6 +221,7 @@ def approval_keyboard(approval_id: int, lead: Lead, has_templates: bool = False)
         ],
         [{"text": "📅 Предложить консультацию", "callback_data": f"consult:{approval_id}"}],
         [{"text": "📂 Переместить на этап", "callback_data": f"move_stage:{approval_id}"}],
+        [{"text": "📝 Заметка", "callback_data": f"note:{approval_id}"}],
         [{"text": "📋 Открыть лид", "url": lead_url(lead)}],
     ]
     return {"inline_keyboard": rows}
