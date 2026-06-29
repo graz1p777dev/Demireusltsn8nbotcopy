@@ -120,6 +120,7 @@ def approval_card(
     decision: str | None = None,
     messages_count: int = 1,
     last_message_time: str | None = None,
+    claimed_by_name: str | None = None,
 ) -> str:
     client_name = lead.client.name if lead.client else "Без имени"
     contact = lead.client.phone if lead.client and lead.client.phone else lead.contact_id or "-"
@@ -138,8 +139,11 @@ def approval_card(
             translation_block += f"<i>Ответ ИИ:</i> {escape(approval.ai_reply_translation)}\n"
         translation_block += "\n"
     time_line = f"🕐 <b>Написал:</b> {escape(last_message_time)}\n" if last_message_time else ""
+    claim_line = f"⏳ <b>Редактирует:</b> {escape(claimed_by_name)}\n" if claimed_by_name else ""
     text = (
-        f"🟣 <b>Новый AI-ответ №{approval.id:07d}</b>\n\n"
+        f"🟣 <b>Новый AI-ответ №{approval.id:07d}</b>\n"
+        + claim_line
+        + "\n"
         f"👤 <b>Клиент:</b> {escape(client_name or 'Без имени')}\n"
         f"📞 <b>Контакт:</b> {escape(str(contact))}\n"
         f"🧾 <b>Lead ID:</b> {escape(lead.amocrm_lead_id)}\n"
@@ -167,32 +171,56 @@ def approval_card(
     return text
 
 
-def approval_keyboard(approval_id: int, lead: Lead) -> dict:
-    return {
-        "inline_keyboard": [
-            [
-                {"text": "✅ Принять", "callback_data": f"approve:{approval_id}"},
-                {"text": "❌ Отклонить", "callback_data": f"reject:{approval_id}"},
-            ],
-            [
-                {"text": "✏️ Изменить вручную", "callback_data": f"edit:{approval_id}"},
-                {"text": "🤖 AI-редактор", "callback_data": f"ai_edit:{approval_id}"},
-            ],
-            [
-                {"text": "💾 Сохранить", "callback_data": f"save:{approval_id}"},
-                {"text": "🧠 Память", "callback_data": f"memory:{approval_id}"},
-            ],
-            [
-                {"text": "📅 Предложить консультацию", "callback_data": f"consult:{approval_id}"},
-            ],
-            [
-                {"text": "📂 Переместить на этап", "callback_data": f"move_stage:{approval_id}"},
-            ],
-            [
-                {"text": "📋 Открыть лид", "url": lead_url(lead)},
-            ],
-        ]
-    }
+def approval_keyboard(approval_id: int, lead: Lead, has_templates: bool = False) -> dict:
+    rows = [
+        [
+            {"text": "✅ Принять", "callback_data": f"approve:{approval_id}"},
+            {"text": "❌ Отклонить", "callback_data": f"reject:{approval_id}"},
+        ],
+        [
+            {"text": "✏️ Изменить вручную", "callback_data": f"edit:{approval_id}"},
+            {"text": "🤖 AI-редактор", "callback_data": f"ai_edit:{approval_id}"},
+        ],
+    ]
+    if has_templates:
+        rows.append([{"text": "📋 Шаблоны ответов", "callback_data": f"tpl_list:{approval_id}"}])
+    rows += [
+        [
+            {"text": "💾 Сохранить", "callback_data": f"save:{approval_id}"},
+            {"text": "🧠 Память", "callback_data": f"memory:{approval_id}"},
+        ],
+        [{"text": "📅 Предложить консультацию", "callback_data": f"consult:{approval_id}"}],
+        [{"text": "📂 Переместить на этап", "callback_data": f"move_stage:{approval_id}"}],
+        [{"text": "📋 Открыть лид", "url": lead_url(lead)}],
+    ]
+    return {"inline_keyboard": rows}
+
+
+def send_templates_menu(chat_id: str | int, templates: list[dict], approval_id: int) -> dict:
+    if not settings.telegram_bot_token or not templates:
+        return {"skipped": True}
+    rows = []
+    for i in range(0, len(templates), 2):
+        row = []
+        for tpl in templates[i:i + 2]:
+            row.append({
+                "text": tpl["name"],
+                "callback_data": f"tpl:{approval_id}:{tpl['id']}",
+            })
+        rows.append(row)
+    rows.append([{"text": "✖ Отмена", "callback_data": f"tpl_cancel:{approval_id}"}])
+    with httpx.Client(timeout=20) as client:
+        resp = client.post(
+            _api_url("sendMessage"),
+            json={
+                "chat_id": chat_id,
+                "text": "📋 <b>Выберите шаблон ответа:</b>",
+                "parse_mode": "HTML",
+                "reply_markup": {"inline_keyboard": rows},
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
 
 
 def stages_keyboard(stages: list[dict], approval_id: int) -> dict:
@@ -269,11 +297,12 @@ def send_approval_card(
     messages_count: int = 1,
     extra_chat_ids: list[str] | None = None,
     last_message_time: str | None = None,
+    has_templates: bool = False,
 ) -> dict:
     if not telegram_enabled():
         return {"skipped": True, "reason": "telegram not configured"}
     card_text = approval_card(approval, lead, messages_count=messages_count, last_message_time=last_message_time)
-    keyboard = approval_keyboard(approval.id, lead)
+    keyboard = approval_keyboard(approval.id, lead, has_templates=has_templates)
     message_ids: dict[str, str] = {}
     last_response: dict = {}
     with httpx.Client(timeout=20) as client:
@@ -314,6 +343,8 @@ def edit_approval_card(
     messages_count: int = 1,
     chat_id: str | None = None,
     last_message_time: str | None = None,
+    claimed_by_name: str | None = None,
+    has_templates: bool = False,
 ) -> dict:
     if not telegram_enabled() or not approval.telegram_message_id:
         return {"skipped": True}
@@ -321,11 +352,10 @@ def edit_approval_card(
     if not pairs:
         return {"skipped": True}
     if decision:
-        # Keep lead link button after decision
         keyboard = {"inline_keyboard": [[{"text": "📂 Открыть лид", "url": lead_url(lead)}]]}
     else:
-        keyboard = approval_keyboard(approval.id, lead)
-    card_text = approval_card(approval, lead, decision=decision, messages_count=messages_count, last_message_time=last_message_time)
+        keyboard = approval_keyboard(approval.id, lead, has_templates=has_templates)
+    card_text = approval_card(approval, lead, decision=decision, messages_count=messages_count, last_message_time=last_message_time, claimed_by_name=claimed_by_name)
     last_response: dict = {}
     with httpx.Client(timeout=20) as client:
         for target_chat, message_id in pairs:

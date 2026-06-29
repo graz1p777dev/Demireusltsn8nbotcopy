@@ -14,6 +14,8 @@ from app.tasks.pipeline import (
     apply_ai_edited_reply,
     apply_edited_reply,
     approve_request,
+    clear_claim,
+    get_claim,
     pop_ai_edit_session,
     pop_edit_prompt_msg,
     pop_edit_session,
@@ -21,11 +23,34 @@ from app.tasks.pipeline import (
     reject_request,
     save_request,
     set_ai_edit_session,
+    set_claim,
     set_edit_prompt_msg,
     set_edit_session,
 )
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
+
+
+def _load_manager_name(db, manager_id: str) -> str:
+    try:
+        row = db.scalar(select(Setting).where(Setting.key == "telegram_managers"))
+        if not row or not row.value:
+            return manager_id
+        managers = _json.loads(row.value)
+        for m in managers:
+            if str(m.get("chat_id", "")) == manager_id:
+                return m.get("name", manager_id)
+    except Exception:
+        pass
+    return manager_id
+
+
+def _load_templates(db) -> list[dict]:
+    try:
+        row = db.scalar(select(Setting).where(Setting.key == "reply_templates"))
+        return _json.loads(row.value) if row and row.value else []
+    except Exception:
+        return []
 
 
 def _load_db_manager_ids(db) -> set[str]:
@@ -136,8 +161,50 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             ok = save_request(db, approval_id, manager_id)
             telegram.answer_callback(callback_id, "Сохранено в /no-sorted")
             return {"ok": ok, "action": action}
+        if action == "tpl_list":
+            templates = _load_templates(db)
+            if not templates:
+                telegram.answer_callback(callback_id, "Шаблонов нет. Добавьте в CRM → Настройки")
+                return {"ok": True, "action": action}
+            telegram.answer_callback(callback_id)
+            telegram.send_templates_menu(manager_id, templates, approval_id)
+            return {"ok": True, "action": action}
+        if action == "tpl":
+            parts = raw_id.split(":", 1)
+            if len(parts) != 2:
+                telegram.answer_callback(callback_id, "Ошибка")
+                return {"ok": False}
+            approval_id = int(parts[0])
+            tpl_id = parts[1]
+            approval = db.get(ApprovalRequest, approval_id)
+            lead = db.get(Lead, approval.lead_id) if approval else None
+            if not approval or not lead:
+                telegram.answer_callback(callback_id, "Лид не найден")
+                return {"ok": False}
+            templates = _load_templates(db)
+            tpl = next((t for t in templates if str(t.get("id")) == str(tpl_id)), None)
+            if not tpl:
+                telegram.answer_callback(callback_id, "Шаблон не найден")
+                return {"ok": False}
+            approval.edited_reply = tpl["text"]
+            approval.status = "edited"
+            approval.manager_telegram_id = manager_id
+            db.commit()
+            clear_claim(db, approval_id)
+            has_templates = bool(templates)
+            telegram.edit_approval_card(approval, lead, chat_id=callback_chat_id, has_templates=has_templates)
+            telegram.answer_callback(callback_id, f"✅ Шаблон «{tpl['name']}» применён")
+            return {"ok": True, "action": action}
+        if action == "tpl_cancel":
+            telegram.answer_callback(callback_id, "Отменено")
+            return {"ok": True, "action": action}
         if action == "edit":
             set_edit_session(db, manager_id, approval_id)
+            manager_name = _load_manager_name(db, manager_id)
+            set_claim(db, approval_id, manager_id, manager_name)
+            has_templates = bool(_load_templates(db))
+            if approval and lead:
+                telegram.edit_approval_card(approval, lead, claimed_by_name=manager_name, has_templates=has_templates)
             telegram.answer_callback(callback_id)
             resp = telegram.send_text(manager_id, f"✏️ Редакт вручную №{approval_id:07d}\n\nОтправьте новый текст ответа.")
             mid = resp.get("result", {}).get("message_id")
@@ -146,6 +213,11 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             return {"ok": True, "action": action}
         if action == "ai_edit":
             set_ai_edit_session(db, manager_id, approval_id)
+            manager_name = _load_manager_name(db, manager_id)
+            set_claim(db, approval_id, manager_id, manager_name)
+            has_templates = bool(_load_templates(db))
+            if approval and lead:
+                telegram.edit_approval_card(approval, lead, claimed_by_name=manager_name, has_templates=has_templates)
             telegram.answer_callback(callback_id)
             resp = telegram.send_text(manager_id, f"🤖 AI редакт №{approval_id:07d}\n\nНапишите промпт — как изменить ответ?\n\nНапример: «сделай короче», «добавь про акцию», «переведи на кыргызский»")
             mid = resp.get("result", {}).get("message_id")
@@ -260,7 +332,9 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             approval = apply_edited_reply(db, edit_approval_id, manager_id, text)
             lead = db.get(Lead, approval.lead_id) if approval else None
             if approval and lead:
-                telegram.edit_approval_card(approval, lead)
+                clear_claim(db, edit_approval_id)
+                has_templates = bool(_load_templates(db))
+                telegram.edit_approval_card(approval, lead, has_templates=has_templates)
             return {"ok": True, "action": "edited"}
 
         # AI-редактор
@@ -272,6 +346,8 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             approval = apply_ai_edited_reply(db, ai_edit_approval_id, manager_id, text)
             lead = db.get(Lead, approval.lead_id) if approval else None
             if approval and lead:
-                telegram.edit_approval_card(approval, lead)
+                clear_claim(db, ai_edit_approval_id)
+                has_templates = bool(_load_templates(db))
+                telegram.edit_approval_card(approval, lead, has_templates=has_templates)
             return {"ok": True, "action": "ai_edited"}
     return {"ok": True}

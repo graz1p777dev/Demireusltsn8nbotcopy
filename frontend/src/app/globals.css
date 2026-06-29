@@ -28,6 +28,24 @@
   --mono:       'SF Mono', 'Fira Code', monospace;
 }
 
+[data-theme="dark"] {
+  --bg:         #0F172A;
+  --bg-2:       #1E293B;
+  --bg-3:       #273349;
+  --bg-4:       #334155;
+  --border:     #334155;
+  --border-2:   #475569;
+  --primary-light: #1e3a6e;
+  --amber-light: #3a2800;
+  --emerald-light: #052e1c;
+  --red-light:  #3b0a0a;
+  --text:       #F1F5F9;
+  --text-2:     #94A3B8;
+  --text-3:     #64748B;
+  --shadow-sm:  0 1px 3px rgba(0,0,0,.3);
+  --shadow-md:  0 4px 12px rgba(0,0,0,.4);
+}
+
 html, body {
   height: 100%; background: var(--bg); color: var(--text);
   font-family: var(--sans); font-size: 14px; line-height: 1.6;

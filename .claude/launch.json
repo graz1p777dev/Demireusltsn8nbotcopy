@@ -18,6 +18,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "3458", "--directory", "/Users/graz1p/Desktop/PortfolioAlihan"],
       "port": 3458
+    },
+    {
+      "name": "crm-frontend",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd '/Users/graz1p/Desktop/Demi Results n8n copy project/frontend' && npm run dev -- --port 3001"],
+      "port": 3001
     }
   ]
 }

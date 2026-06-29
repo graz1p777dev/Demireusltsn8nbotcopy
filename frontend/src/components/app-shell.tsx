@@ -2,8 +2,31 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { BarChart2, Bot, MessageSquare, Settings, CalendarCheck } from "lucide-react";
+import { useEffect, useState } from "react";
+import { BarChart2, Bot, MessageSquare, Settings, CalendarCheck, Sun, Moon } from "lucide-react";
 import { LiveClockWidget, LogoutButton } from "@/components/dashboard";
+
+function ThemeToggle() {
+  const [dark, setDark] = useState(false);
+  useEffect(() => {
+    const saved = localStorage.getItem("theme");
+    const isDark = saved === "dark" || (!saved && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    setDark(isDark);
+    document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
+  }, []);
+  const toggle = () => {
+    const next = !dark;
+    setDark(next);
+    document.documentElement.setAttribute("data-theme", next ? "dark" : "light");
+    localStorage.setItem("theme", next ? "dark" : "light");
+  };
+  return (
+    <button onClick={toggle} title={dark ? "Светлая тема" : "Тёмная тема"}
+      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-3)", padding: 4, display: "flex", alignItems: "center" }}>
+      {dark ? <Sun size={14} /> : <Moon size={14} />}
+    </button>
+  );
+}
 
 export function AppShell({ children, title, subtitle }: {
   children: React.ReactNode;
@@ -62,6 +85,7 @@ export function AppShell({ children, title, subtitle }: {
             <p>{subtitle}</p>
           </div>
           <div className="topbar-right">
+            <ThemeToggle />
             <LiveClockWidget />
             <span className="pill">
               <span className="dot" style={{ width: 6, height: 6 }} />

@@ -1,9 +1,12 @@
+import csv
+import io
 import json as _json
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, func, select, text
 from sqlalchemy.orm import Session
@@ -545,3 +548,100 @@ def delete_slot(slot_id: int, db: Session = Depends(get_db)) -> dict:
     db.delete(slot)
     db.commit()
     return {"ok": True}
+
+
+# ── Reply Templates ──────────────────────────────────────────────────────────
+
+def _load_templates_setting(db: Session) -> Setting | None:
+    return db.scalar(select(Setting).where(Setting.key == "reply_templates"))
+
+
+def _get_templates(db: Session) -> list[dict]:
+    row = _load_templates_setting(db)
+    if not row or not row.value:
+        return []
+    try:
+        return _json.loads(row.value)
+    except Exception:
+        return []
+
+
+def _save_templates(db: Session, templates: list[dict]) -> None:
+    row = _load_templates_setting(db)
+    if row:
+        row.value = _json.dumps(templates, ensure_ascii=False)
+    else:
+        db.add(Setting(key="reply_templates", value=_json.dumps(templates, ensure_ascii=False), is_secret=False))
+    db.commit()
+
+
+class TemplatePayload(BaseModel):
+    name: str
+    text: str
+
+
+@router.get("/templates")
+def list_templates(db: Session = Depends(get_db)) -> list[dict]:
+    return _get_templates(db)
+
+
+@router.post("/templates")
+def create_template(payload: TemplatePayload, db: Session = Depends(get_db)) -> dict:
+    templates = _get_templates(db)
+    new_id = max((t.get("id", 0) for t in templates), default=0) + 1
+    tpl = {"id": new_id, "name": payload.name.strip(), "text": payload.text.strip()}
+    templates.append(tpl)
+    _save_templates(db, templates)
+    return tpl
+
+
+@router.patch("/templates/{tpl_id}")
+def update_template(tpl_id: int, payload: TemplatePayload, db: Session = Depends(get_db)) -> dict:
+    templates = _get_templates(db)
+    for t in templates:
+        if t.get("id") == tpl_id:
+            t["name"] = payload.name.strip()
+            t["text"] = payload.text.strip()
+            _save_templates(db, templates)
+            return t
+    raise HTTPException(404, "Template not found")
+
+
+@router.delete("/templates/{tpl_id}")
+def delete_template(tpl_id: int, db: Session = Depends(get_db)) -> dict:
+    templates = [t for t in _get_templates(db) if t.get("id") != tpl_id]
+    _save_templates(db, templates)
+    return {"ok": True}
+
+
+# ── CSV Export ───────────────────────────────────────────────────────────────
+
+@router.get("/export/leads")
+def export_leads(db: Session = Depends(get_db)) -> StreamingResponse:
+    rows = db.execute(text(
+        "SELECT l.amocrm_lead_id, c.name AS client_name, c.phone, "
+        "l.ai_enabled, l.last_message_at, "
+        "COUNT(DISTINCT m.id) AS messages, "
+        "COUNT(DISTINCT a.id) AS approvals "
+        "FROM leads l "
+        "LEFT JOIN clients c ON c.id = l.client_id "
+        "LEFT JOIN messages m ON m.lead_id = l.id "
+        "LEFT JOIN approval_requests a ON a.lead_id = l.id "
+        "GROUP BY l.id, c.name, c.phone "
+        "ORDER BY l.last_message_at DESC NULLS LAST"
+    )).fetchall()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Lead ID", "Клиент", "Телефон", "AI вкл", "Последнее сообщение", "Сообщений", "AI ответов"])
+    for r in rows:
+        writer.writerow([r[0], r[1] or "", r[2] or "", "да" if r[3] else "нет",
+                         str(r[4])[:19] if r[4] else "", r[5], r[6]])
+
+    output.seek(0)
+    filename = f"leads_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv; charset=utf-8-sig",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )

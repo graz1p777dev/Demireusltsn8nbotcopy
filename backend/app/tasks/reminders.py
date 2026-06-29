@@ -1,13 +1,13 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.models.entities import ConsultationReminder
+from app.models.entities import ApprovalRequest, ConsultationReminder, Setting
 from app.services import google_sheets, telegram
 from app.tasks.celery_app import celery_app
 
@@ -137,3 +137,58 @@ def check_consultation_results() -> dict:
         db.close()
 
     return {"notified": notified}
+
+
+@celery_app.task(name="app.tasks.reminders.check_overdue_approvals")
+def check_overdue_approvals() -> dict:
+    """Every 5 min: ping managers if a pending approval is older than 15 min and not yet reminded."""
+    threshold_minutes = 15
+    remind_cooldown_minutes = 30
+
+    db = SessionLocal()
+    reminded = 0
+    try:
+        now = datetime.now(ZoneInfo("UTC"))
+        cutoff = now - timedelta(minutes=threshold_minutes)
+
+        overdue = db.scalars(
+            select(ApprovalRequest)
+            .where(
+                ApprovalRequest.status == "pending",
+                ApprovalRequest.created_at <= cutoff,
+            )
+        ).all()
+
+        for approval in overdue:
+            reminded_key = f"overdue_reminded:{approval.id}"
+            last_reminded = db.scalar(select(Setting).where(Setting.key == reminded_key))
+            if last_reminded:
+                try:
+                    last_time = datetime.fromisoformat(last_reminded.value)
+                    if now - last_time < timedelta(minutes=remind_cooldown_minutes):
+                        continue
+                except Exception:
+                    pass
+
+            age_min = int((now - approval.created_at).total_seconds() // 60)
+            text = (
+                f"⚠️ <b>Ожидает ответа {age_min} мин</b>\n\n"
+                f"AI-ответ №{approval.id:07d} ещё не обработан.\n"
+                f"Клиент ждёт — не забудьте принять или отклонить."
+            )
+            telegram.send_text_all_managers(text)
+
+            if last_reminded:
+                last_reminded.value = now.isoformat()
+            else:
+                db.add(Setting(key=reminded_key, value=now.isoformat(), is_secret=False))
+            reminded += 1
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        _log.exception("Error in check_overdue_approvals")
+    finally:
+        db.close()
+
+    return {"reminded": reminded}

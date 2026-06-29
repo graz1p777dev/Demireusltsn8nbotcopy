@@ -23,6 +23,11 @@ celery_app.conf.update(
             "task": "app.tasks.reminders.check_consultation_results",
             "schedule": crontab(minute="*/30"),
         },
+        # Every 5 min — remind managers about overdue pending approvals
+        "check-overdue-approvals": {
+            "task": "app.tasks.reminders.check_overdue_approvals",
+            "schedule": crontab(minute="*/5"),
+        },
     },
 )
 celery_app.autodiscover_tasks(["app.tasks.pipeline", "app.tasks.reminders"])

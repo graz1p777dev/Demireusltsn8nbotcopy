@@ -102,6 +102,15 @@ def _mark_buffers_processed(db, buffers: list[MessageBuffer]) -> None:
     db.commit()
 
 
+def _load_templates(db) -> list[dict]:
+    try:
+        import json as _json
+        row = db.scalar(select(Setting).where(Setting.key == "reply_templates"))
+        return _json.loads(row.value) if row and row.value else []
+    except Exception:
+        return []
+
+
 def _load_extra_manager_ids(db) -> list[str]:
     """Return chat IDs of managers stored in settings table."""
     try:
@@ -295,9 +304,11 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
             db.add(approval)
             db.commit()
             try:
+                _templates_exist = bool(_load_templates(db))
                 response = telegram.send_approval_card(
                     approval, lead, messages_count=len(dialogue),
                     extra_chat_ids=extra_managers, last_message_time=_last_msg_display,
+                    has_templates=_templates_exist,
                 )
                 message_ids_json = response.get("_message_ids")
                 if message_ids_json:
@@ -399,6 +410,11 @@ def update_integrations_after_approval(db, lead: Lead, extracted: dict) -> None:
         apply_sales_stage_from_extracted(db, lead, extracted)
 
 
+def _get_session(db, key: str) -> str | None:
+    setting = db.scalar(select(Setting).where(Setting.key == key))
+    return setting.value if setting else None
+
+
 def _set_session(db, key: str, value: str) -> None:
     setting = db.scalar(select(Setting).where(Setting.key == key))
     if setting:
@@ -443,6 +459,25 @@ def set_edit_prompt_msg(db, manager_id: str, message_id: int) -> None:
 def pop_edit_prompt_msg(db, manager_id: str) -> int | None:
     value = _pop_session(db, f"telegram_edit_prompt_msg:{manager_id}")
     return int(value) if value else None
+
+
+def set_claim(db, approval_id: int, manager_id: str, manager_name: str = "") -> None:
+    payload = f"{manager_id}\x00{manager_name}" if manager_name else manager_id
+    _set_session(db, f"claimed:{approval_id}", payload)
+
+
+def get_claim(db, approval_id: int) -> tuple[str, str] | None:
+    value = _get_session(db, f"claimed:{approval_id}")
+    if not value:
+        return None
+    if "\x00" in value:
+        mid, name = value.split("\x00", 1)
+        return mid, name
+    return value, ""
+
+
+def clear_claim(db, approval_id: int) -> None:
+    _pop_session(db, f"claimed:{approval_id}")
 
 
 def apply_ai_edited_reply(db, approval_id: int, manager_id: str, edit_prompt: str) -> ApprovalRequest | None:
@@ -495,6 +530,7 @@ def approve_request(db, approval_id: int, manager_id: str) -> bool:
     approval.manager_telegram_id = manager_id
     approval.approved_at = datetime.now(ZoneInfo(settings.timezone))
     db.commit()
+    clear_claim(db, approval_id)
     move_lead_status(db, lead, settings.amocrm_status_on_approve, "approval_accepted")
 
     latest_user_message = db.scalar(
@@ -563,6 +599,7 @@ def reject_request(db, approval_id: int, manager_id: str) -> bool:
     approval.status = "rejected"
     approval.manager_telegram_id = manager_id
     db.commit()
+    clear_claim(db, approval_id)
     lead = db.get(Lead, approval.lead_id)
     if lead:
         move_lead_status(db, lead, settings.amocrm_status_on_reject, "approval_rejected")
