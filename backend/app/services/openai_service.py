@@ -41,11 +41,21 @@ def _usage_payload(response) -> dict:
     return dict(usage)
 
 
-def _result(content: str | dict, model: str, purpose: str, usage: dict, latency_ms: int) -> AIResult:
+def _result(
+    content: str | dict,
+    model: str,
+    purpose: str,
+    usage: dict,
+    latency_ms: int,
+    input_cost_per_1m: float | None = None,
+    output_cost_per_1m: float | None = None,
+) -> AIResult:
     prompt_tokens = int(usage.get("prompt_tokens") or 0)
     completion_tokens = int(usage.get("completion_tokens") or 0)
-    input_cost = prompt_tokens / 1_000_000 * settings.openai_input_cost_per_1m_tokens
-    output_cost = completion_tokens / 1_000_000 * settings.openai_output_cost_per_1m_tokens
+    _in = input_cost_per_1m if input_cost_per_1m is not None else settings.openai_input_cost_per_1m_tokens
+    _out = output_cost_per_1m if output_cost_per_1m is not None else settings.openai_output_cost_per_1m_tokens
+    input_cost = prompt_tokens / 1_000_000 * _in
+    output_cost = completion_tokens / 1_000_000 * _out
     return AIResult(
         content=content,
         model=model,
@@ -79,11 +89,19 @@ def _clean_dialogue(dialogue: list[dict]) -> list[dict]:
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
-def generate_reply(dialogue: list[dict], slot_context: dict, system_prompt: str | None = None) -> AIResult:
+def generate_reply(
+    dialogue: list[dict],
+    slot_context: dict,
+    system_prompt: str | None = None,
+    use_sales_model: bool = False,
+) -> AIResult:
+    _model = settings.openai_model_sales if use_sales_model else settings.openai_model_simple
+    _in_cost = settings.openai_input_cost_sales if use_sales_model else settings.openai_input_cost_simple
+    _out_cost = settings.openai_output_cost_sales if use_sales_model else settings.openai_output_cost_simple
     if not settings.openai_api_key:
         return AIResult(
             content="Здравствуйте 👋 Подскажите, пожалуйста, что сейчас беспокоит вашу кожу?",
-            model=settings.openai_model,
+            model=_model,
             purpose="sales_agent",
         )
     started = perf_counter()
@@ -126,7 +144,7 @@ def generate_reply(dialogue: list[dict], slot_context: dict, system_prompt: str 
         user_message = {"role": "user", "content": context_text}
 
     response = _client().chat.completions.create(
-        model=settings.openai_model,
+        model=_model,
         temperature=0.5,
         messages=[
             {"role": "system", "content": system_prompt or SALES_AGENT_SYSTEM_PROMPT},
@@ -136,10 +154,12 @@ def generate_reply(dialogue: list[dict], slot_context: dict, system_prompt: str 
     latency_ms = int((perf_counter() - started) * 1000)
     return _result(
         content=(response.choices[0].message.content or "").strip(),
-        model=settings.openai_model,
+        model=_model,
         purpose="sales_agent",
         usage=_usage_payload(response),
         latency_ms=latency_ms,
+        input_cost_per_1m=_in_cost,
+        output_cost_per_1m=_out_cost,
     )
 
 
@@ -244,7 +264,7 @@ def _deepseek_client() -> OpenAI:
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def classify_sales_intent(dialogue: list[dict], latest_message: str) -> AIResult:
-    fallback = {"is_sales": True, "reason": "no_key"}
+    fallback = {"is_sales": True, "is_complex": True, "reason": "no_key"}
     model = "deepseek-chat"
 
     if not settings.deepseek_api_key:
@@ -267,6 +287,7 @@ def classify_sales_intent(dialogue: list[dict], latest_message: str) -> AIResult
         latency_ms = int((perf_counter() - started) * 1000)
         content = fallback | json.loads(response.choices[0].message.content or "{}")
         content["is_sales"] = bool(content.get("is_sales"))
+        content["is_complex"] = bool(content.get("is_complex", True))
         return _result(content=content, model=settings.openai_extractor_model,
                        purpose="sales_intent", usage=_usage_payload(response), latency_ms=latency_ms)
 
