@@ -93,6 +93,7 @@ def generate_reply(
     dialogue: list[dict],
     slot_context: dict,
     system_prompt: str | None = None,
+    memory_context: str | None = None,
     use_sales_model: bool = False,
 ) -> AIResult:
     _model = settings.openai_model_sales if use_sales_model else settings.openai_model_simple
@@ -143,11 +144,14 @@ def generate_reply(
     else:
         user_message = {"role": "user", "content": context_text}
 
+    _base_prompt = system_prompt or SALES_AGENT_SYSTEM_PROMPT
+    if memory_context and memory_context.strip():
+        _base_prompt = _base_prompt + "\n\n---\nПАМЯТЬ МАГАЗИНА (используй эти данные при ответах):\n" + memory_context.strip()
     response = _client().chat.completions.create(
         model=_model,
         temperature=0.5,
         messages=[
-            {"role": "system", "content": system_prompt or SALES_AGENT_SYSTEM_PROMPT},
+            {"role": "system", "content": _base_prompt},
             user_message,
         ],
     )
