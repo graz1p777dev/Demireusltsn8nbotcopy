@@ -57,6 +57,16 @@ services:
         condition: service_healthy
     command: celery -A app.tasks.celery_app.celery_app worker --loglevel=INFO --concurrency=2
 
+  beat:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: celery -A app.tasks.celery_app.celery_app beat --loglevel=INFO
+
   frontend:
     build:
       context: ./frontend
