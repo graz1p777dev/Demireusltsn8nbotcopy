@@ -1,7 +1,9 @@
+import io
 import json
 import re
 from time import perf_counter
 
+import httpx
 from openai import OpenAI
 from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -360,3 +362,29 @@ def ai_edit_reply(original_reply: str, client_message: str, edit_prompt: str) ->
         usage=_usage_payload(response),
         latency_ms=latency_ms,
     )
+
+
+def transcribe_voice(url: str) -> tuple[str, str]:
+    """Download audio from URL and transcribe with Whisper. Returns (text, lang_code like 'ru'/'ky')."""
+    if not settings.openai_api_key:
+        return "", "ru"
+    auth_headers: dict = {}
+    if settings.amocrm_access_token:
+        auth_headers["Authorization"] = f"Bearer {settings.amocrm_access_token}"
+    with httpx.Client(timeout=60, follow_redirects=True) as http:
+        resp = http.get(url, headers=auth_headers)
+        resp.raise_for_status()
+        audio_bytes = resp.content
+    filename = url.split("?")[0].rstrip("/").split("/")[-1] or "voice.ogg"
+    if not any(filename.endswith(ext) for ext in (".mp3", ".mp4", ".ogg", ".wav", ".m4a", ".webm", ".mpeg", ".mpga")):
+        filename = "voice.ogg"
+    response = _client().audio.transcriptions.create(
+        model="whisper-1",
+        file=(filename, io.BytesIO(audio_bytes)),
+        response_format="verbose_json",
+    )
+    text = (response.text or "").strip()
+    lang = (getattr(response, "language", None) or "ru").lower()
+    _lang_map = {"russian": "ru", "kyrgyz": "ky", "english": "en", "uzbek": "uz", "kazakh": "kk"}
+    lang = _lang_map.get(lang, lang[:2])
+    return text, lang

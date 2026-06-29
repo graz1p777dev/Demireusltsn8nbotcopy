@@ -9,6 +9,7 @@ import json as _json
 from app.models.entities import ApprovalRequest, ConsultationReminder, Lead, Setting
 from app.schemas.amocrm import parse_amocrm_webhook
 from app.services import amocrm, telegram
+from app.services.openai_service import transcribe_voice
 from app.services.repository import upsert_incoming
 from app.tasks.pipeline import (
     apply_ai_edited_reply,
@@ -79,6 +80,35 @@ async def amocrm_webhook(
     if not body:
         body = await request.json()
     incoming = parse_amocrm_webhook(body)
+
+    # Handle voice messages: transcribe and language-filter before processing
+    _VOICE_TYPES = {"voice", "audio"}
+    if incoming.attachment_type in _VOICE_TYPES and incoming.attachment_link:
+        try:
+            transcribed, lang = transcribe_voice(incoming.attachment_link)
+        except Exception:
+            transcribed, lang = "", "ru"
+
+        if transcribed and lang not in {"ru", "ky"}:
+            # Unsupported language — reply to client and skip AI pipeline
+            lead, _conv, _ = upsert_incoming(db, incoming)
+            try:
+                session = amocrm.create_chat_session()
+                amocrm.send_chat_message(
+                    session,
+                    lead.chat_id or "",
+                    lead.amocrm_lead_id,
+                    lead.contact_id,
+                    "Голосовые сообщения принимаются только на русском или кыргызском языке. "
+                    "Пожалуйста, напишите текстом или отправьте голосовое на русском / кыргызском.",
+                )
+            except Exception:
+                pass
+            return {"ok": True, "queued": False, "reason": "voice_lang_unsupported", "lang": lang}
+
+        if transcribed:
+            incoming.text = f"[Голосовое сообщение]: {transcribed}"
+
     lead, _conversation, is_new = upsert_incoming(db, incoming)
     if is_new and lead.ai_enabled:
         process_lead_buffer.apply_async(
