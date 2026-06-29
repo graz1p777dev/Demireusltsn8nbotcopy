@@ -327,16 +327,48 @@ def get_analytics(db: Session = Depends(get_db)) -> dict:
         "SELECT COUNT(*) FROM ai_extracted_fields WHERE consultation_confirmed = true"
     )) or 0
 
-    # Token usage & cost
+    # Token usage & cost — overall
     token_row = db.execute(text(
         "SELECT COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
         "COALESCE(SUM(total_tokens),0), COALESCE(SUM(total_cost),0) FROM ai_usage"
     )).one()
 
+    # Per-purpose breakdown
+    purpose_rows = db.execute(text(
+        "SELECT purpose, COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0), "
+        "COALESCE(SUM(total_tokens),0), COALESCE(SUM(total_cost),0), COUNT(*) "
+        "FROM ai_usage GROUP BY purpose ORDER BY SUM(total_tokens) DESC"
+    )).fetchall()
+    usage_by_purpose = [
+        {
+            "purpose": r[0],
+            "prompt_tokens": int(r[1]),
+            "completion_tokens": int(r[2]),
+            "total_tokens": int(r[3]),
+            "total_cost": float(r[4]),
+            "calls": int(r[5]),
+        }
+        for r in purpose_rows
+    ]
+
+    # Daily token usage (last 30 days)
+    daily_tokens_rows = db.execute(text(
+        "SELECT DATE(created_at AT TIME ZONE 'Asia/Bishkek') AS day, "
+        "COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0) "
+        "FROM ai_usage WHERE created_at >= NOW() - INTERVAL '30 days' "
+        "GROUP BY day ORDER BY day"
+    )).fetchall()
+    daily_tokens = [
+        {"date": str(r[0]), "prompt_tokens": int(r[1]), "completion_tokens": int(r[2])}
+        for r in daily_tokens_rows
+    ]
+
     return {
         "hourly": hourly_full,
         "daily": daily,
+        "daily_tokens": daily_tokens,
         "top_problems": top_problems,
+        "usage_by_purpose": usage_by_purpose,
         "stats": {
             "total_leads": total_leads,
             "total_messages": total_messages,

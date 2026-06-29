@@ -141,17 +141,18 @@ def generate_reply(dialogue: list[dict], slot_context: dict, system_prompt: str 
     )
 
 
-def summarize_dialogue(dialogue: list[dict]) -> str:
+def summarize_dialogue(dialogue: list[dict]) -> tuple[str, AIResult | None]:
     """Generate a brief hypervisor summary of the full conversation for managers."""
     if not dialogue:
-        return ""
+        return "", None
     if not settings.openai_api_key:
-        return ""
+        return "", None
     try:
         text = "\n".join(
             f"{'Клиент' if m['role'] == 'user' else 'Бот'}: {str(m.get('content', ''))[:300]}"
             for m in dialogue
         )
+        t0 = perf_counter()
         response = _client().chat.completions.create(
             model=settings.openai_extractor_model,
             temperature=0,
@@ -164,9 +165,17 @@ def summarize_dialogue(dialogue: list[dict]) -> str:
                 {"role": "user", "content": text},
             ],
         )
-        return (response.choices[0].message.content or "").strip()
+        latency_ms = int((perf_counter() - t0) * 1000)
+        result = _result(
+            response.choices[0].message.content or "",
+            model=settings.openai_extractor_model,
+            purpose="hypervisor",
+            usage=_usage_payload(response),
+            latency_ms=latency_ms,
+        )
+        return result.content.strip(), result
     except Exception:
-        return ""
+        return "", None
 
 
 def detect_language(text: str) -> str:
