@@ -40,13 +40,11 @@ export function AppShell({ children, title, subtitle }: {
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-logo">
-            <div className="brand-dot">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                <path d="M2 17l10 5 10-5"/>
-                <path d="M2 12l10 5 10-5"/>
-              </svg>
-            </div>
+            <img
+              src="/588452014_17953880493043363_6494850109638003503_n.jpg"
+              alt="Demi Results"
+              style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
+            />
             <span className="brand-name">Demi Results</span>
           </div>
           <span className="brand-sub">CRM Bot v2</span>
