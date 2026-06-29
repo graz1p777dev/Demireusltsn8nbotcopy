@@ -468,6 +468,7 @@ def edit_approval_card(
         keyboard = approval_keyboard(approval.id, lead, has_templates=has_templates)
     card_text = approval_card(approval, lead, decision=decision, messages_count=messages_count, last_message_time=last_message_time, claimed_by_name=claimed_by_name)
     last_response: dict = {}
+    any_success = False
     with httpx.Client(timeout=20) as client:
         for target_chat, message_id in pairs:
             try:
@@ -484,11 +485,16 @@ def edit_approval_card(
                 )
                 if resp.is_success:
                     last_response = resp.json()
+                    any_success = True
                 else:
                     _log.error("telegram edit failed chat_id=%s status=%s body=%s",
                                target_chat, resp.status_code, resp.text[:300])
+                    last_response = {"error": True, "status": resp.status_code, "body": resp.text[:300]}
             except Exception as exc:
                 _log.error("telegram edit error chat_id=%s: %s", target_chat, exc)
+                last_response = {"error": True, "exc": str(exc)}
+    if not any_success and pairs:
+        last_response["_all_failed"] = True
     return last_response
 
 
