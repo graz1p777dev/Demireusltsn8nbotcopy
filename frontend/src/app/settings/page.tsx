@@ -1,6 +1,6 @@
-import { UsersPanel, PromptPanel, ManagersPanel, AiTestPanel, ChangelogPanel, TemplatesPanel, SectionShell } from "@/components/dashboard";
+import { UsersPanel, PromptPanel, ManagersPanel, AiTestPanel, ChangelogPanel, TemplatesPanel, StopWordsPanel, SectionShell } from "@/components/dashboard";
 import { AppShell } from "@/components/app-shell";
-import { Users, Bot, MessageCircle, FlaskConical, ScrollText, BookOpen } from "lucide-react";
+import { Users, Bot, MessageCircle, FlaskConical, ScrollText, BookOpen, ShieldAlert } from "lucide-react";
 
 export default function SettingsPage() {
   return (
@@ -13,6 +13,9 @@ export default function SettingsPage() {
       </SectionShell>
       <SectionShell id="templates" title="Шаблоны ответов" icon={<BookOpen size={14} />}>
         <TemplatesPanel />
+      </SectionShell>
+      <SectionShell id="stop-words" title="Стоп-слова" icon={<ShieldAlert size={14} />}>
+        <StopWordsPanel />
       </SectionShell>
       <SectionShell id="managers" title="Менеджеры Telegram" icon={<MessageCircle size={14} />}>
         <ManagersPanel />
