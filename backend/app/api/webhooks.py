@@ -236,8 +236,18 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             if approval and lead:
                 telegram.edit_approval_card(approval, lead, claimed_by_name=manager_name, has_templates=has_templates)
             telegram.answer_callback(callback_id)
-            resp = telegram.send_text(manager_id, f"✏️ Редакт вручную №{approval_id:07d}\n\nОтправьте новый текст ответа.")
-            mid = resp.get("result", {}).get("message_id")
+            prompt_text = f"✏️ Редакт вручную №{approval_id:07d}\n\nОтправьте новый текст ответа."
+            resp2: dict = {}
+            try:
+                resp2 = telegram.send_text(manager_id, prompt_text)
+            except Exception:
+                pass
+            if not resp2.get("result"):
+                try:
+                    resp2 = telegram.send_text(callback_chat_id, prompt_text)
+                except Exception:
+                    pass
+            mid = resp2.get("result", {}).get("message_id")
             if mid:
                 set_edit_prompt_msg(db, manager_id, mid)
             return {"ok": True, "action": action}
@@ -249,7 +259,18 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             if approval and lead:
                 telegram.edit_approval_card(approval, lead, claimed_by_name=manager_name, has_templates=has_templates)
             telegram.answer_callback(callback_id)
-            resp = telegram.send_text(manager_id, f"🤖 AI редакт №{approval_id:07d}\n\nНапишите промпт — как изменить ответ?\n\nНапример: «сделай короче», «добавь про акцию», «переведи на кыргызский»")
+            prompt_text = f"🤖 AI редакт №{approval_id:07d}\n\nНапишите промпт — как изменить ответ?\n\nНапример: «сделай короче», «добавь про акцию», «переведи на кыргызский»"
+            # Try personal chat first; fall back to the chat where button was pressed
+            resp: dict = {}
+            try:
+                resp = telegram.send_text(manager_id, prompt_text)
+            except Exception:
+                pass
+            if not resp.get("result"):
+                try:
+                    resp = telegram.send_text(callback_chat_id, prompt_text)
+                except Exception:
+                    pass
             mid = resp.get("result", {}).get("message_id")
             if mid:
                 set_edit_prompt_msg(db, manager_id, mid)
