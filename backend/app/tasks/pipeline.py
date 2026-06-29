@@ -272,7 +272,8 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         if settings.human_approval_enabled:
             _mark_buffers_processed(db, buffers)
             stage = _lead_stage_snapshot(db, lead)
-            conv_summary, hypervisor_usage = summarize_dialogue(full_dialogue) if len(full_dialogue) > 2 else ("", None)
+            _user_msgs = [m for m in full_dialogue if m.get("role") == "user"]
+            conv_summary, hypervisor_usage = summarize_dialogue(full_dialogue) if len(_user_msgs) > 1 else ("", None)
             if hypervisor_usage:
                 save_ai_usage(db, lead.id, hypervisor_usage)
             translations = detect_and_translate(combined_text, reply)
