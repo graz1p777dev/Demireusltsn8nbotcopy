@@ -295,6 +295,24 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             if mid:
                 set_edit_prompt_msg(db, manager_id, mid)
             return {"ok": True, "action": action}
+        if action == "translate":
+            telegram.answer_callback(callback_id)
+            if approval:
+                from app.services.openai_service import ai_edit_reply
+                from app.tasks.pipeline import save_ai_usage
+                reply_text = approval.edited_reply or approval.ai_reply or ""
+                if reply_text:
+                    try:
+                        result = ai_edit_reply(
+                            reply_text,
+                            approval.client_message or "",
+                            "Переведи этот ответ на русский язык. Верни только перевод без пояснений.",
+                        )
+                        save_ai_usage(db, approval.lead_id, result)
+                        telegram.send_text(callback_chat_id, f"🌐 <b>Перевод ответа:</b>\n{result.content}")
+                    except Exception:
+                        telegram.send_text(callback_chat_id, "Ошибка перевода.")
+            return {"ok": True, "action": action}
         if action == "memory":
             telegram.answer_callback(callback_id)
             if approval:

@@ -11,6 +11,8 @@ from app.models.entities import (
     AIExtractedFields,
     AIUsage,
     ApprovalRequest,
+    Blacklist,
+    Client,
     Lead,
     Message,
     MessageBuffer,
@@ -147,6 +149,39 @@ def apply_sales_stage_from_extracted(db, lead: Lead, extracted: dict) -> None:
         move_lead_status(db, lead, settings.amocrm_status_qualified, "lead_card_filled")
 
 
+def _is_blacklisted(db, lead: Lead) -> bool:
+    phone = lead.client.phone if lead.client else None
+    if not phone:
+        return False
+    return db.scalar(select(Blacklist).where(Blacklist.phone == phone)) is not None
+
+
+def _check_stop_words(db, text: str) -> str:
+    """Returns the matched stop word if any, empty string otherwise."""
+    setting = db.scalar(select(Setting).where(Setting.key == "stop_words"))
+    if not setting or not setting.value.strip():
+        return ""
+    for word in setting.value.split(","):
+        word = word.strip().lower()
+        if word and word in text.lower():
+            return word
+    return ""
+
+
+def _count_repeat_leads(db, lead: Lead) -> int:
+    """Returns total lead count for this client's phone number."""
+    phone = lead.client.phone if lead.client else None
+    if not phone:
+        return 1
+    from sqlalchemy import func as sqlfunc
+    count = db.scalar(
+        select(sqlfunc.count(Lead.id))
+        .join(Client, Lead.client_id == Client.id)
+        .where(Client.phone == phone)
+    )
+    return count or 1
+
+
 @celery_app.task(name="process_lead_buffer", autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
 def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
     db = SessionLocal()
@@ -180,6 +215,12 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
 
         combined_text = " ".join(item.text for item in buffers if item.text).strip()
         conversation_id = buffers[-1].conversation_id
+
+        # Blacklist check
+        if _is_blacklisted(db, lead):
+            _mark_buffers_processed(db, buffers)
+            log_action(db, lead.id, "pipeline.blacklisted", "skipped", {"phone": lead.client.phone if lead.client else None})
+            return
 
         all_messages = db.scalars(
             select(Message)
@@ -229,6 +270,39 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
                 "skipped",
                 {"reason": intent.get("reason"), "message": combined_text},
             )
+            return
+
+        # Stop words check — send flagged card without AI reply
+        stop_word = _check_stop_words(db, combined_text)
+        if stop_word and settings.human_approval_enabled:
+            _mark_buffers_processed(db, buffers)
+            stage = _lead_stage_snapshot(db, lead)
+            repeat_count = _count_repeat_leads(db, lead)
+            extra_managers = _load_extra_manager_ids(db)
+            _templates_exist = bool(_load_templates(db))
+            approval = ApprovalRequest(
+                lead_id=lead.id,
+                chat_id=lead.chat_id or "",
+                client_message=combined_text,
+                ai_reply="",
+                status="pending",
+                extracted_fields={"_stop_word": stop_word},
+                amocrm_pipeline_id=stage.get("pipeline_id"),
+                amocrm_status_id=stage.get("status_id"),
+                amocrm_stage_name=stage.get("stage_name"),
+            )
+            db.add(approval)
+            db.commit()
+            try:
+                response = telegram.send_approval_card(
+                    approval, lead, extra_chat_ids=extra_managers,
+                    has_templates=_templates_exist, repeat_count=repeat_count,
+                )
+                if response.get("_message_ids"):
+                    approval.telegram_message_id = response["_message_ids"]
+                db.commit()
+            except Exception as exc:
+                log_action(db, lead.id, "telegram.stop_word_card", "error", error=exc)
             return
 
         move_lead_status(db, lead, settings.amocrm_status_primary_contact, "sales_message")
@@ -287,6 +361,7 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         if settings.human_approval_enabled:
             _mark_buffers_processed(db, buffers)
             stage = _lead_stage_snapshot(db, lead)
+            repeat_count = _count_repeat_leads(db, lead)
             _user_msgs = [m for m in full_dialogue if m.get("role") == "user"]
             conv_summary, hypervisor_usage = summarize_dialogue(full_dialogue) if len(_user_msgs) > 1 else ("", None)
             if hypervisor_usage:
@@ -314,6 +389,7 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
                 response = telegram.send_approval_card(
                     approval, lead, messages_count=len(dialogue),
                     extra_chat_ids=extra_managers, last_message_time=_last_msg_display,
+                    repeat_count=repeat_count,
                     has_templates=_templates_exist,
                 )
                 message_ids_json = response.get("_message_ids")

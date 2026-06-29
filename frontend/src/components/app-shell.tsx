@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { BarChart2, Bot, MessageSquare, Settings, CalendarCheck, Sun, Moon } from "lucide-react";
+import { BarChart2, Bot, MessageSquare, Settings, CalendarCheck, Sun, Moon, FileBarChart2 } from "lucide-react";
 import { LiveClockWidget, LogoutButton } from "@/components/dashboard";
 
 function ThemeToggle() {
@@ -60,6 +60,9 @@ export function AppShell({ children, title, subtitle }: {
           <span className="nav-section">Администрирование</span>
           <Link href="/analytics" className={path === "/analytics" ? "active" : ""}>
             <BarChart2 size={15} /> Аналитика
+          </Link>
+          <Link href="/reports" className={path === "/reports" ? "active" : ""}>
+            <FileBarChart2 size={15} /> Отчёты
           </Link>
           <Link href="/consultations" className={path === "/consultations" ? "active" : ""}>
             <CalendarCheck size={15} /> Консультации
