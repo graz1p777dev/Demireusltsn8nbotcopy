@@ -340,12 +340,12 @@ def get_analytics(db: Session = Depends(get_db)) -> dict:
     total_approvals = db.scalar(select(func.count()).select_from(ApprovalRequest)) or 0
     approved = db.scalar(
         select(func.count()).select_from(ApprovalRequest)
-        .where(ApprovalRequest.status == "approved")
+        .where(ApprovalRequest.status.in_(["approved", "sent"]))
     ) or 0
     # Approved without editing (ai_reply sent as-is)
     approved_as_is = db.scalar(
         select(func.count()).select_from(ApprovalRequest)
-        .where(ApprovalRequest.status == "approved")
+        .where(ApprovalRequest.status.in_(["approved", "sent"]))
         .where(ApprovalRequest.edited_reply.is_(None))
     ) or 0
     rejected = db.scalar(
@@ -762,7 +762,7 @@ def daily_report(days: int = 30, db: Session = Depends(get_db)) -> list[dict]:
         SELECT
             DATE(created_at AT TIME ZONE '{tz}') AS day,
             COUNT(*) FILTER (WHERE status IN ('pending','edited','stop_word')) AS new_count,
-            COUNT(*) FILTER (WHERE status = 'approved') AS approved,
+            COUNT(*) FILTER (WHERE status IN ('approved','sent')) AS approved,
             COUNT(*) FILTER (WHERE status = 'rejected') AS rejected,
             COUNT(*) FILTER (WHERE status = 'saved') AS saved
         FROM approval_requests
@@ -821,7 +821,7 @@ def analytics_best_replies(limit: int = 20, db: Session = Depends(get_db)) -> li
     rows = db.scalars(
         select(ApprovalRequest)
         .where(
-            ApprovalRequest.status == "approved",
+            ApprovalRequest.status.in_(["approved", "sent"]),
             ApprovalRequest.edited_reply.is_(None),
         )
         .order_by(ApprovalRequest.created_at.desc())
