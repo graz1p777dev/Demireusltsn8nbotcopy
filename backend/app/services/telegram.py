@@ -286,8 +286,12 @@ def delete_message(chat_id: str | int, message_id: int) -> None:
         client.post(_api_url("deleteMessage"), json={"chat_id": chat_id, "message_id": message_id})
 
 
-def _forward_client_photos(client_message: str, chat_ids: list[str]) -> None:
-    """Download [picture] attachments from amoCRM and send them to managers via Telegram."""
+def _forward_client_photos(
+    client_message: str,
+    chat_ids: list[str],
+    reply_to_message_ids: dict[str, str] | None = None,
+) -> None:
+    """Download [picture] attachments from amoCRM and send as replies to the approval card."""
     urls = _PICTURE_RE.findall(client_message)
     if not urls or not settings.telegram_bot_token:
         return
@@ -305,10 +309,13 @@ def _forward_client_photos(client_message: str, chat_ids: list[str]) -> None:
                 ext = "jpg" if "jpeg" in content_type else content_type.split("/")[-1]
                 for chat_id in chat_ids:
                     try:
+                        data: dict = {"chat_id": chat_id}
+                        if reply_to_message_ids and chat_id in reply_to_message_ids:
+                            data["reply_to_message_id"] = reply_to_message_ids[chat_id]
                         http.post(
                             _api_url("sendPhoto"),
                             files={"photo": (f"photo.{ext}", img.content, content_type)},
-                            data={"chat_id": chat_id},
+                            data=data,
                         )
                     except Exception as exc:
                         _log.error("sendPhoto error chat_id=%s: %s", chat_id, exc)
@@ -355,9 +362,13 @@ def send_approval_card(
             except Exception as exc:
                 _log.error("telegram send error chat_id=%s: %s", chat_id, exc)
     last_response["_message_ids"] = json.dumps(message_ids)
-    # Send attached photos after the text card
+    # Send attached photos as replies to the approval card
     if approval.client_message:
-        _forward_client_photos(approval.client_message, list(_all_manager_chat_ids(extra_chat_ids)))
+        _forward_client_photos(
+            approval.client_message,
+            list(_all_manager_chat_ids(extra_chat_ids)),
+            reply_to_message_ids=message_ids,
+        )
     return last_response
 
 
