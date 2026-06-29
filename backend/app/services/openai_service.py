@@ -320,6 +320,7 @@ def classify_sales_intent(dialogue: list[dict], latest_message: str) -> AIResult
 def extract_fields(dialogue: list[dict], contacts: str | None) -> AIResult:
     empty = {
         "skin_problem": [],
+        "age": None,
         "consultation_format": None,
         "city": None,
         "experience": None,
