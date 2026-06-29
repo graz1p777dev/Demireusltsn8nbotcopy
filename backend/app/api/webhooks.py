@@ -87,9 +87,10 @@ async def amocrm_webhook(
 
     # Handle voice messages: transcribe and language-filter before processing
     _VOICE_TYPES = {"voice", "audio"}
-    if incoming.attachment_type in _VOICE_TYPES and incoming.attachment_link:
+    _voice_url = incoming.attachment_link or incoming.media or None
+    if incoming.attachment_type in _VOICE_TYPES and _voice_url:
         try:
-            transcribed, lang = transcribe_voice(incoming.attachment_link)
+            transcribed, lang = transcribe_voice(_voice_url)
         except Exception:
             transcribed, lang = "", "ru"
 
