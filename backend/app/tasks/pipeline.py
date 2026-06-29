@@ -480,6 +480,15 @@ def pop_edit_prompt_msg(db, manager_id: str) -> int | None:
     return int(value) if value else None
 
 
+def set_note_session(db, manager_id: str, approval_id: int) -> None:
+    _set_session(db, f"telegram_note_session:{manager_id}", str(approval_id))
+
+
+def pop_note_session(db, manager_id: str) -> int | None:
+    value = _pop_session(db, f"telegram_note_session:{manager_id}")
+    return int(value) if value else None
+
+
 def set_claim(db, approval_id: int, manager_id: str, manager_name: str = "") -> None:
     payload = f"{manager_id}\x00{manager_name}" if manager_name else manager_id
     _set_session(db, f"claimed:{approval_id}", payload)
