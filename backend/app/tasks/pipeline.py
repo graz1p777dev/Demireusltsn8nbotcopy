@@ -253,7 +253,12 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
             _minutes_since = 9999
         slot_context["minutes_since_last_message"] = _minutes_since
         custom_prompt = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt"))
-        reply_result = generate_reply(dialogue, slot_context, system_prompt=custom_prompt.value if custom_prompt else None)
+        reply_result = generate_reply(
+            dialogue,
+            slot_context,
+            system_prompt=custom_prompt.value if custom_prompt else None,
+            use_sales_model=bool(intent.get("is_complex", True)),
+        )
         reply = str(reply_result.content)
         save_ai_usage(db, lead.id, reply_result)
         log_action(

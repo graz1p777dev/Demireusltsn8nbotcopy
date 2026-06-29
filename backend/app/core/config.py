@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4.1-mini"
     openai_extractor_model: str = "gpt-4.1-mini"
+    # Two-tier reply model routing: simple questions vs active sales/objections
+    openai_model_simple: str = "gpt-5.1"
+    openai_model_sales: str = "gpt-5.5"
+    openai_input_cost_simple: float = 1.25
+    openai_output_cost_simple: float = 10.0
+    openai_input_cost_sales: float = 5.0
+    openai_output_cost_sales: float = 30.0
     deepseek_api_key: str = ""
     openai_input_cost_per_1m_tokens: float = 0
     openai_output_cost_per_1m_tokens: float = 0
