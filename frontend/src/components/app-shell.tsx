@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { BarChart2, Bot, MessageSquare, Settings, CalendarCheck, Sun, Moon, FileBarChart2 } from "lucide-react";
+import { BarChart2, MessageSquare, Settings, CalendarCheck, Sun, Moon, FileBarChart2, Menu } from "lucide-react";
 import { LiveClockWidget, LogoutButton } from "@/components/dashboard";
 
 function ThemeToggle() {
@@ -34,10 +34,20 @@ export function AppShell({ children, title, subtitle }: {
   subtitle: string;
 }) {
   const path = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Close sidebar on navigation
+  useEffect(() => { setMenuOpen(false); }, [path]);
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      {/* Overlay for mobile sidebar */}
+      <div
+        className={`sidebar-overlay${menuOpen ? " sidebar-open" : ""}`}
+        onClick={() => setMenuOpen(false)}
+      />
+
+      <aside className={`sidebar${menuOpen ? " sidebar-open" : ""}`}>
         <div className="brand">
           <div className="brand-logo">
             <img
@@ -81,9 +91,14 @@ export function AppShell({ children, title, subtitle }: {
 
       <main className="main">
         <div className="topbar">
-          <div className="topbar-left">
-            <h1>{title}</h1>
-            <p>{subtitle}</p>
+          <div className="topbar-left" style={{ display: "flex", alignItems: "center" }}>
+            <button className="hamburger-btn" onClick={() => setMenuOpen(o => !o)} title="Меню">
+              <Menu size={20} />
+            </button>
+            <div>
+              <h1>{title}</h1>
+              <p>{subtitle}</p>
+            </div>
           </div>
           <div className="topbar-right">
             <ThemeToggle />

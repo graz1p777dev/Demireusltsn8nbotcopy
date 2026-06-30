@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { RefreshCw, Send, Bot, User, Power, PowerOff, MessageSquare, X, ChevronDown, ChevronRight, LogOut, UserPlus, Trash2, Shield, ShieldOff, FlaskConical, Download, Plus, Pencil } from "lucide-react";
+import { RefreshCw, Send, Bot, User, Power, PowerOff, MessageSquare, X, ChevronDown, ChevronRight, LogOut, UserPlus, Trash2, Shield, ShieldOff, Download, Plus, Pencil, ArrowLeft } from "lucide-react";
 
 import { useRouter } from "next/navigation";
 import { apiGet, apiJson, Conversation } from "@/lib/api";
@@ -73,7 +73,7 @@ export function LiveClockWidget() {
 }
 
 /* ── Resizable Grid ── */
-function ResizableGrid({ children }: { children: React.ReactNode[] }) {
+function ResizableGrid({ children, mobileView }: { children: React.ReactNode[]; mobileView: string }) {
   const [leftWidth, setLeftWidth] = useState(290);
   const [dragging, setDragging] = useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -102,7 +102,7 @@ function ResizableGrid({ children }: { children: React.ReactNode[] }) {
 
   const [left, right] = React.Children.toArray(children);
   return (
-    <div className="grid" ref={containerRef} style={{ userSelect: dragging ? "none" : undefined }}>
+    <div className="grid" ref={containerRef} data-view={mobileView} style={{ userSelect: dragging ? "none" : undefined }}>
       <div style={{ width: leftWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", borderRight: "none" }}
            className="panel">
         {left}
@@ -167,6 +167,7 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
   const [sending, setSending] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [showDetails, setShowDetails] = useState(false);
+  const [mobileView, setMobileView] = useState<"list" | "chat">("list");
 
   const filtered = useMemo(
     () => conversations.filter((c) =>
@@ -177,6 +178,7 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
 
   const selectLead = useCallback(async (id: number) => {
     setSelectedId(id);
+    setMobileView("chat");
     setLoading(true);
     try {
       const data = await apiGet<LeadDetail>(`/admin/leads/${id}`);
@@ -219,7 +221,7 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
   };
 
   return (
-    <ResizableGrid>
+    <ResizableGrid mobileView={mobileView}>
       {/* ─── LEFT: conversation list ─── */}
       <>
         <div className="panel-header">
@@ -300,13 +302,16 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
           </div>
           {detail && (
             <div className="chat-header-actions">
+              <button className="btn-ghost back-btn" onClick={() => setMobileView("list")} title="Назад">
+                <ArrowLeft size={14} />
+              </button>
               <button className="btn-secondary" onClick={() => toggleAI(false)}>
                 <PowerOff size={12} /> AI выкл
               </button>
               <button className="btn-primary" onClick={() => toggleAI(true)}>
                 <Power size={12} /> AI вкл
               </button>
-              <button className="btn-ghost" onClick={() => { setSelectedId(null); setDetail(null); }} title="Закрыть">
+              <button className="btn-ghost" onClick={() => { setSelectedId(null); setDetail(null); setMobileView("list"); }} title="Закрыть">
                 <X size={14} />
               </button>
             </div>
