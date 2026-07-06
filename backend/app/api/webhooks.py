@@ -1,6 +1,10 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
+
+_log = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.db.session import get_db
@@ -321,6 +325,30 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             if approval:
                 telegram.send_text(manager_id, telegram.memory_lines(approval.extracted_fields))
             return {"ok": True, "action": action}
+        if action == "why":
+            if not approval:
+                telegram.answer_callback(callback_id, "Запрос не найден")
+                return {"ok": False, "error": "approval_not_found"}
+            telegram.answer_callback(callback_id, "Спрашиваю у бота...")
+            from app.services.openai_service import explain_reply
+            from app.tasks.pipeline import save_ai_usage
+            try:
+                result = explain_reply(
+                    approval.client_message or "",
+                    approval.edited_reply or approval.ai_reply or "",
+                    conversation_summary=approval.conversation_summary,
+                )
+                save_ai_usage(db, approval.lead_id, result)
+                explanation = result.content or "Не удалось получить объяснение."
+            except Exception as exc:
+                _log.error("explain_reply failed approval_id=%s: %s", approval_id, exc)
+                explanation = "Ошибка: не удалось получить объяснение."
+            text_out = f"🤖 Почему бот так ответил (№{approval_id:07d}):\n\n{explanation}"
+            try:
+                telegram.send_text(callback_chat_id or manager_id, text_out)
+            except Exception:
+                telegram.send_text(manager_id, text_out)
+            return {"ok": True, "action": action}
         if action == "consult":
             if not approval or not lead:
                 telegram.answer_callback(callback_id, "Лид не найден")
@@ -375,6 +403,9 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
         db_manager_ids = _load_db_manager_ids(db)
         if not telegram.is_authorized_manager(manager_id, message_chat_id, extra_allowed=db_manager_ids):
             return {"ok": False, "error": "unauthorized_manager"}
+        # Non-text message (sticker/photo/voice) must not consume pending edit sessions
+        if not text:
+            return {"ok": True, "action": "ignored_non_text"}
         if text in {"/consult", "/consultations"}:
             from app.services.google_sheets import get_all_consultations_for_date
             from datetime import datetime

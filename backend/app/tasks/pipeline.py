@@ -245,8 +245,8 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         if combined_text and (not full_dialogue or full_dialogue[-1]["content"] != combined_text):
             full_dialogue.append({"role": "user", "content": combined_text})
 
-        # last 20 messages for reply generation
-        dialogue = full_dialogue[-20:]
+        # last 30 messages for reply generation
+        dialogue = full_dialogue[-30:]
 
         stage = _lead_stage_snapshot(db, lead)
         if (
