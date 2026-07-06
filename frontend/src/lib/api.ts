@@ -1,5 +1,5 @@
 // Server: go directly to Railway. Client: go through Vercel proxy.
-const API_BASE =
+export const API_BASE =
   typeof window === "undefined"
     ? (process.env.BACKEND_API_URL || "http://localhost:8000")
     : (process.env.NEXT_PUBLIC_API_BASE_URL || "/api/backend");

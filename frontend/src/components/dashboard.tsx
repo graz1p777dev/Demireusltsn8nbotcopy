@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { RefreshCw, Send, Bot, User, Power, PowerOff, MessageSquare, X, ChevronDown, ChevronRight, LogOut, UserPlus, Trash2, Shield, ShieldOff, Download, Plus, Pencil, ArrowLeft } from "lucide-react";
+import { RefreshCw, Send, Bot, User, Power, PowerOff, MessageSquare, X, ChevronDown, ChevronRight, LogOut, UserPlus, Trash2, Shield, ShieldOff, Download, Plus, Pencil, ArrowLeft, ImagePlus, Mic, Settings2 } from "lucide-react";
 
 import { useRouter } from "next/navigation";
-import { apiGet, apiJson, Conversation } from "@/lib/api";
+import { apiGet, apiJson, Conversation, API_BASE } from "@/lib/api";
 
 type Message = { role: string; text: string; status: string; created_at: string };
 
@@ -1119,29 +1119,103 @@ export function ChangelogPanel() {
 /* ── AI Test Panel ── */
 type ChatMsg = { role: "user" | "assistant"; content: string; tokens?: number };
 
+type TestMsg = ChatMsg & { cost?: number; latency?: number; model?: string; images?: string[] };
+
 export function AiTestPanel() {
-  const [history, setHistory] = useState<ChatMsg[]>([]);
+  const [history, setHistory] = useState<TestMsg[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Tester settings
+  const [showSettings, setShowSettings] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
+  const [model, setModel] = useState("");
+  const [temperature, setTemperature] = useState(0.5);
+  const [maxTokens, setMaxTokens] = useState(0);
+  const [testPrompt, setTestPrompt] = useState("");
+  const [promptLoaded, setPromptLoaded] = useState(false);
+  const [workingHours, setWorkingHours] = useState(true);
+  const [lang, setLang] = useState("ru");
+  const [images, setImages] = useState<string[]>([]);
+  const [transcribing, setTranscribing] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const voiceRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [history]);
 
+  useEffect(() => {
+    apiGet<string[]>("/admin/openai-models").then(setModels).catch(() => {});
+    apiGet<{ model_simple: string }>("/admin/bot-model")
+      .then(d => setModel(d.model_simple)).catch(() => {});
+  }, []);
+
+  // Load prod prompt once as the editable test copy (prod is never modified here)
+  useEffect(() => {
+    if (!showSettings || promptLoaded) return;
+    apiGet<{ prompt: string }>("/admin/bot-prompt")
+      .then(d => { setTestPrompt(d.prompt); setPromptLoaded(true); })
+      .catch(() => {});
+  }, [showSettings, promptLoaded]);
+
+  function attachImage(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setImages(prev => [...prev, String(reader.result)]);
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }
+
+  async function attachVoice(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    setTranscribing(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const resp = await fetch(`${API_BASE}/admin/ai-test/transcribe`, { method: "POST", body: fd });
+      const data = await resp.json();
+      if (data.text) setInput(prev => (prev ? prev + " " : "") + data.text);
+      else alert("Не удалось распознать: " + (data.error || "пустой результат"));
+    } catch {
+      alert("Ошибка распознавания голоса");
+    } finally {
+      setTranscribing(false);
+    }
+  }
+
   async function send() {
     const text = input.trim();
-    if (!text || loading) return;
-    const newHistory: ChatMsg[] = [...history, { role: "user", content: text }];
+    if ((!text && images.length === 0) || loading) return;
+    const sentImages = images;
+    const newHistory: TestMsg[] = [...history, { role: "user", content: text || "[изображение]", images: sentImages }];
     setHistory(newHistory);
     setInput("");
+    setImages([]);
     setLoading(true);
     try {
-      const res = await apiJson<{ ok: boolean; reply: string; tokens?: number; model?: string }>(
+      const res = await apiJson<{ ok: boolean; reply: string; tokens?: number; cost?: number; latency_ms?: number; model?: string }>(
         "/admin/ai-test", "POST",
-        { message: text, history: history.map(m => ({ role: m.role, content: m.content })) }
+        {
+          message: text || "[клиент прислал фото]",
+          history: history.map(m => ({ role: m.role, content: m.content })),
+          model,
+          temperature,
+          max_tokens: maxTokens || null,
+          system_prompt: promptLoaded ? testPrompt : "",
+          is_working_hours: workingHours,
+          lang,
+          images: sentImages,
+        }
       );
-      setHistory(prev => [...prev, { role: "assistant", content: res.reply, tokens: res.tokens }]);
+      setHistory(prev => [...prev, {
+        role: "assistant", content: res.reply,
+        tokens: res.tokens, cost: res.cost, latency: res.latency_ms, model: res.model,
+      }]);
     } catch {
       setHistory(prev => [...prev, { role: "assistant", content: "❌ Ошибка запроса" }]);
     } finally {
@@ -1149,11 +1223,81 @@ export function AiTestPanel() {
     }
   }
 
+  const inputStyle: React.CSSProperties = {
+    background: "var(--bg-3)", border: "1px solid var(--border)", color: "var(--text)",
+    borderRadius: 7, padding: "6px 9px", fontSize: 12, outline: "none",
+  };
+
   return (
     <section style={{ padding: "16px 20px" }}>
-      <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 14 }}>
-        Тест ИИ бота с текущим промптом. История диалога сохраняется внутри панели и не попадает в CRM.
-      </p>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 10 }}>
+        <p style={{ fontSize: 12, color: "var(--text-3)", margin: 0 }}>
+          Полный тест бота: своя модель, температура, тестовый промпт (боевой промпт не меняется), фото и голосовые.
+        </p>
+        <button className="btn-ghost" onClick={() => setShowSettings(s => !s)}
+          style={{ padding: "5px 10px", fontSize: 11, display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
+          <Settings2 size={12} /> {showSettings ? "Скрыть настройки" : "Настройки теста"}
+        </button>
+      </div>
+
+      {showSettings && (
+        <div style={{
+          background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 10,
+          padding: "14px 16px", marginBottom: 12, display: "flex", flexDirection: "column", gap: 12,
+        }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Модель</label>
+              <select value={model} onChange={e => setModel(e.target.value)} style={{ ...inputStyle, width: "100%" }}>
+                {model && !models.includes(model) && <option value={model}>{model}</option>}
+                {models.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", display: "block", marginBottom: 4 }}>
+                Температура: {temperature.toFixed(2)}
+              </label>
+              <input type="range" min={0} max={1} step={0.05} value={temperature}
+                onChange={e => setTemperature(parseFloat(e.target.value))}
+                style={{ width: "100%", accentColor: "var(--primary)" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Max tokens (0 = ∞)</label>
+              <input type="number" min={0} step={100} value={maxTokens}
+                onChange={e => setMaxTokens(parseInt(e.target.value) || 0)}
+                style={{ ...inputStyle, width: "100%" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Язык клиента</label>
+              <select value={lang} onChange={e => setLang(e.target.value)} style={{ ...inputStyle, width: "100%" }}>
+                <option value="ru">Русский</option>
+                <option value="ky">Кыргызский</option>
+                <option value="kz">Казахский</option>
+                <option value="en">English</option>
+                <option value="uz">Uzbek</option>
+              </select>
+            </div>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-2)", cursor: "pointer" }}>
+            <input type="checkbox" checked={workingHours} onChange={e => setWorkingHours(e.target.checked)}
+              style={{ accentColor: "var(--primary)" }} />
+            Рабочее время (10:00–21:00)
+          </label>
+          <div>
+            <label style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", display: "block", marginBottom: 4 }}>
+              Тестовый системный промпт (боевой не изменяется)
+            </label>
+            <textarea value={testPrompt} onChange={e => setTestPrompt(e.target.value)} rows={8}
+              placeholder={promptLoaded ? "" : "Загрузка промпта..."}
+              style={{
+                width: "100%", background: "var(--bg-3)", border: "1px solid var(--border)",
+                color: "var(--text)", borderRadius: 8, padding: "8px 10px", fontSize: 11.5,
+                fontFamily: "var(--mono)", lineHeight: 1.5, resize: "vertical",
+                boxSizing: "border-box", outline: "none",
+              }} />
+          </div>
+        </div>
+      )}
 
       {/* Chat area */}
       <div style={{
@@ -1170,8 +1314,16 @@ export function AiTestPanel() {
         {history.map((m, i) => (
           <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: m.role === "user" ? "flex-end" : "flex-start", gap: 2 }}>
             <div style={{ fontSize: 10, color: "var(--text-3)", marginBottom: 1 }}>
-              {m.role === "user" ? <><User size={9} /> Вы</> : <><Bot size={9} /> ИИ бот{m.tokens ? ` · ${m.tokens} tok` : ""}</>}
+              {m.role === "user" ? <><User size={9} /> Вы</> : <><Bot size={9} /> ИИ бот</>}
             </div>
+            {m.images && m.images.length > 0 && (
+              <div style={{ display: "flex", gap: 4, marginBottom: 3 }}>
+                {m.images.map((img, j) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={j} src={img} alt="" style={{ width: 90, height: 90, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border)" }} />
+                ))}
+              </div>
+            )}
             <div style={{
               background: m.role === "user" ? "var(--accent)" : "var(--bg-2)",
               color: m.role === "user" ? "#fff" : "var(--text)",
@@ -1182,6 +1334,14 @@ export function AiTestPanel() {
             }}>
               {m.content}
             </div>
+            {m.role === "assistant" && m.tokens != null && (
+              <div style={{ fontSize: 10, color: "var(--text-3)", display: "flex", gap: 8, marginTop: 2 }}>
+                <span style={{ color: "var(--primary)" }}>🪙 {m.tokens} tok</span>
+                {m.cost != null && <span style={{ color: "#059669" }}>${m.cost.toFixed(5)}</span>}
+                {m.latency != null && <span style={{ color: "#D97706" }}>⚡{m.latency}ms</span>}
+                {m.model && <span>{m.model}</span>}
+              </div>
+            )}
           </div>
         ))}
         {loading && (
@@ -1198,8 +1358,41 @@ export function AiTestPanel() {
         <div ref={bottomRef} />
       </div>
 
+      {/* Attached images preview */}
+      {images.length > 0 && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+          {images.map((img, i) => (
+            <div key={i} style={{ position: "relative" }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={img} alt="" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 8, border: "1px solid var(--border)" }} />
+              <button onClick={() => setImages(prev => prev.filter((_, j) => j !== i))}
+                style={{
+                  position: "absolute", top: -6, right: -6, width: 18, height: 18,
+                  borderRadius: "50%", background: "var(--bg-2)", border: "1px solid var(--border)",
+                  color: "var(--text-2)", fontSize: 10, cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
+                }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Input */}
       <div style={{ display: "flex", gap: 8 }}>
+        <input ref={fileRef} type="file" accept="image/*" onChange={attachImage} style={{ display: "none" }} />
+        <input ref={voiceRef} type="file" accept="audio/*,.ogg,.oga,.m4a,.mp3,.wav" onChange={attachVoice} style={{ display: "none" }} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <button className="btn-ghost" onClick={() => fileRef.current?.click()} disabled={loading}
+            title="Прикрепить фото" style={{ padding: "8px 10px" }}>
+            <ImagePlus size={15} />
+          </button>
+          <button className="btn-ghost" onClick={() => voiceRef.current?.click()} disabled={loading || transcribing}
+            title="Загрузить голосовое (расшифруется в текст)" style={{ padding: "8px 10px" }}>
+            {transcribing
+              ? <RefreshCw size={15} style={{ animation: "spin .8s linear infinite" }} />
+              : <Mic size={15} />}
+          </button>
+        </div>
         <textarea
           rows={2}
           placeholder="Введите сообщение клиента… (Ctrl+Enter)"
@@ -1214,7 +1407,7 @@ export function AiTestPanel() {
           }}
         />
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <button className="btn-primary" onClick={send} disabled={loading || !input.trim()}
+          <button className="btn-primary" onClick={send} disabled={loading || (!input.trim() && images.length === 0)}
             style={{ padding: "8px 14px", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
             <Send size={13} /> {loading ? "…" : "Отправить"}
           </button>

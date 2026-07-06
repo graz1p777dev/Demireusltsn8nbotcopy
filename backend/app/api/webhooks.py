@@ -127,6 +127,31 @@ async def amocrm_webhook(
     return {"ok": True, "queued": is_new, "lead_id": lead.amocrm_lead_id, "message_id": incoming.message_id}
 
 
+@router.post("/openai")
+async def openai_webhook(request: Request, db: Session = Depends(get_db)) -> dict:
+    """Receive OpenAI platform webhook events (billing, batch, response, etc.).
+
+    Logs every event to action_logs and notifies the main manager in Telegram.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    event_type = str(payload.get("type", "unknown"))
+    from app.tasks.pipeline import log_action
+    log_action(db, None, f"openai.webhook.{event_type}", "received", request=payload)
+    if settings.telegram_manager_chat_id:
+        try:
+            _data = payload.get("data", {})
+            telegram.send_text(
+                settings.telegram_manager_chat_id,
+                f"🔔 OpenAI событие: {event_type}\n{_json.dumps(_data, ensure_ascii=False)[:500]}",
+            )
+        except Exception:
+            pass
+    return {"ok": True}
+
+
 @router.post("/telegram/{secret}")
 async def telegram_webhook(secret: str, request: Request, db: Session = Depends(get_db)) -> dict:
     if settings.telegram_webhook_secret and secret != settings.telegram_webhook_secret:

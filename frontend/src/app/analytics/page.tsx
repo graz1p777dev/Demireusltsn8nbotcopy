@@ -135,14 +135,24 @@ const PROBLEM_COLORS = [
   "#059669","#0891B2","#4F46E5","#C2410C","#65A30D","#0369A1","#9333EA",
 ];
 
+type TokenStat = { tokens: number; cost: number };
+type TokenStats = {
+  today: TokenStat; avg_day: TokenStat; avg_month: TokenStat;
+  year: TokenStat; all_time: TokenStat;
+};
+
 export default function AnalyticsPage() {
   const [data, setData] = useState<Analytics | null>(null);
+  const [tokens, setTokens] = useState<TokenStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     apiGet<Analytics>("/admin/analytics")
       .then(setData)
       .finally(() => setLoading(false));
+    apiGet<TokenStats>("/admin/analytics/tokens")
+      .then(setTokens)
+      .catch(() => {});
   }, []);
 
   const maxProblem = data ? Math.max(...data.top_problems.map(p => p.count), 1) : 1;
@@ -225,6 +235,35 @@ export default function AnalyticsPage() {
                 ))}
               </div>
             </div>
+
+            {/* Token spend: today / averages / year */}
+            {tokens && (
+              <div style={{ background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 12, padding: "18px 20px" }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 12 }}>Расход токенов по периодам</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+                  {[
+                    { label: "Сегодня", stat: tokens.today, color: "#DC2626" },
+                    { label: "Средний в день", stat: tokens.avg_day, color: "#2563EB" },
+                    { label: "За месяц (30 дн.)", stat: tokens.avg_month, color: "#7C3AED" },
+                    { label: "За год", stat: tokens.year, color: "#D97706" },
+                    { label: "За всё время", stat: tokens.all_time, color: "#059669" },
+                  ].map(s => (
+                    <div key={s.label} style={{
+                      background: "var(--bg-3)", border: "1px solid var(--border)",
+                      borderRadius: 10, padding: "12px 14px",
+                    }}>
+                      <div style={{ fontSize: 17, fontWeight: 700, color: s.color }}>
+                        {s.stat.tokens.toLocaleString()} <span style={{ fontSize: 11, fontWeight: 500 }}>tok</span>
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-2)", marginTop: 2 }}>
+                        ${s.stat.cost.toFixed(s.stat.cost >= 1 ? 2 : 4)}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 3 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Line charts */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
