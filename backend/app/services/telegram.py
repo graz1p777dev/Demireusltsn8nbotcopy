@@ -105,16 +105,19 @@ def allowed_manager_ids() -> set[str]:
 
 
 def is_authorized_manager(manager_id: str, chat_id: str | None = None, extra_allowed: set[str] | None = None) -> bool:
+    # Main manager always has access
+    if settings.telegram_manager_chat_id and str(settings.telegram_manager_chat_id) == manager_id:
+        return True
+    # Trust anyone writing from the configured manager group chat
+    if chat_id and str(chat_id) == str(settings.telegram_manager_chat_id):
+        return True
+    # Check explicit allow-list (env var + DB managers passed as extra_allowed)
     allowed_ids = allowed_manager_ids()
     if extra_allowed:
         allowed_ids = allowed_ids | extra_allowed
     if allowed_ids:
         return manager_id in allowed_ids
-    # Fallback: trust anyone writing from the configured manager group chat
-    if chat_id and str(chat_id) == str(settings.telegram_manager_chat_id):
-        return True
-    # Or writing directly to the bot as the sole manager
-    return str(settings.telegram_manager_chat_id) == manager_id
+    return False
 
 
 def _api_url(method: str) -> str:
