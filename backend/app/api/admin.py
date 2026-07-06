@@ -241,6 +241,55 @@ def update_bot_prompt(body: BotPromptUpdate, db: Session = Depends(get_db)) -> d
     return {"ok": True}
 
 
+@router.get("/openai-models")
+def list_openai_models() -> list[str]:
+    """Available OpenAI chat models for the bot."""
+    from openai import OpenAI
+    from app.core.config import settings as _settings
+    if not _settings.openai_api_key:
+        return []
+    try:
+        client = OpenAI(api_key=_settings.openai_api_key)
+        models = [
+            m.id for m in client.models.list()
+            if (m.id.startswith("gpt-") or m.id.startswith("o"))
+            and not any(x in m.id for x in ("audio", "realtime", "transcribe", "tts", "image", "embedding", "moderation", "search", "instruct"))
+        ]
+        return sorted(models)
+    except Exception:
+        return []
+
+
+class BotModelUpdate(BaseModel):
+    model_simple: str = ""
+    model_sales: str = ""
+
+
+@router.get("/bot-model")
+def get_bot_model(db: Session = Depends(get_db)) -> dict:
+    from app.core.config import settings as _settings
+    simple = db.scalar(select(Setting).where(Setting.key == "bot_model_simple"))
+    sales = db.scalar(select(Setting).where(Setting.key == "bot_model_sales"))
+    return {
+        "model_simple": (simple.value if simple else "") or _settings.openai_model_simple,
+        "model_sales": (sales.value if sales else "") or _settings.openai_model_sales,
+        "default_simple": _settings.openai_model_simple,
+        "default_sales": _settings.openai_model_sales,
+    }
+
+
+@router.patch("/bot-model")
+def update_bot_model(body: BotModelUpdate, db: Session = Depends(get_db)) -> dict:
+    for key, value in [("bot_model_simple", body.model_simple), ("bot_model_sales", body.model_sales)]:
+        row = db.scalar(select(Setting).where(Setting.key == key))
+        if row:
+            row.value = value
+        else:
+            db.add(Setting(key=key, value=value, is_secret=False))
+    db.commit()
+    return {"ok": True}
+
+
 class BotMemoryUpdate(BaseModel):
     memory: str
 

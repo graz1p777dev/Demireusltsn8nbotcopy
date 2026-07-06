@@ -1,7 +1,10 @@
 import json
+import logging
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+_log = logging.getLogger(__name__)
 
 from sqlalchemy import select
 
@@ -14,6 +17,7 @@ from app.models.entities import (
     ApprovalRequest,
     Blacklist,
     Client,
+    ClientMemory,
     Lead,
     Message,
     MessageBuffer,
@@ -196,6 +200,54 @@ def _count_repeat_leads(db, lead: Lead) -> int:
     return count or 1
 
 
+# Fields persisted in client_memory (long-term, across leads)
+MEMORY_FIELDS = [
+    "name", "age", "city", "skin_type", "skin_problem", "goal", "problem_duration",
+    "uses_care", "allergies", "consultation_confirmed", "bought_before",
+    "products_used", "what_helped", "what_not_helped", "last_action",
+]
+
+
+def merge_client_memory(db, lead: Lead, extracted: dict, all_messages: list) -> dict:
+    """Merge freshly extracted fields with the client's stored long-term memory.
+
+    Stored values fill gaps in the new extraction; new non-empty values
+    overwrite stored ones. Returns the merged dict (used for the card),
+    and persists updates to client_memory.
+    """
+    if not lead.client_id:
+        return extracted
+    try:
+        rows = db.scalars(
+            select(ClientMemory).where(ClientMemory.client_id == lead.client_id)
+        ).all()
+        stored = {r.key: r for r in rows}
+        merged = dict(extracted)
+        for key in MEMORY_FIELDS:
+            new_val = extracted.get(key)
+            new_empty = new_val in (None, "", [], False)
+            if new_empty and key in stored:
+                old_raw = stored[key].value
+                merged[key] = json.loads(old_raw) if old_raw.startswith(("[", "{")) or old_raw in ("true", "false") else old_raw
+            elif not new_empty:
+                val_str = json.dumps(new_val, ensure_ascii=False) if isinstance(new_val, (list, dict, bool)) else str(new_val)
+                if key in stored:
+                    stored[key].value = val_str
+                else:
+                    db.add(ClientMemory(client_id=lead.client_id, lead_id=lead.id, key=key, value=val_str, source="ai"))
+        # Contact dates from message history
+        if all_messages:
+            _tz = ZoneInfo(settings.timezone)
+            merged["_first_contact"] = all_messages[0].created_at.astimezone(_tz).strftime("%d.%m.%Y") if all_messages[0].created_at else None
+            merged["_last_contact"] = all_messages[-1].created_at.astimezone(_tz).strftime("%d.%m.%Y") if all_messages[-1].created_at else None
+        db.commit()
+        return merged
+    except Exception as exc:
+        _log.warning("merge_client_memory failed lead=%s: %s", lead.id, exc)
+        db.rollback()
+        return extracted
+
+
 @celery_app.task(name="process_lead_buffer", autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
 def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
     db = SessionLocal()
@@ -342,12 +394,16 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         slot_context["minutes_since_last_message"] = _minutes_since
         custom_prompt = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt"))
         bot_memory = db.scalar(select(Setting).where(Setting.key == "bot_memory"))
+        _is_complex = bool(intent.get("is_complex", True))
+        _model_key = "bot_model_sales" if _is_complex else "bot_model_simple"
+        _model_setting = db.scalar(select(Setting).where(Setting.key == _model_key))
         reply_result = generate_reply(
             dialogue,
             slot_context,
             system_prompt=custom_prompt.value if custom_prompt else None,
             memory_context=bot_memory.value if bot_memory else None,
-            use_sales_model=bool(intent.get("is_complex", True)),
+            use_sales_model=_is_complex,
+            model_override=_model_setting.value if _model_setting and _model_setting.value else None,
         )
         reply = str(reply_result.content)
         save_ai_usage(db, lead.id, reply_result)
@@ -364,8 +420,17 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         extracted_result = extract_fields(updated_dialogue, lead.client.name if lead.client else None)
         extracted = dict(extracted_result.content)
         save_ai_usage(db, lead.id, extracted_result)
-        db.add(AIExtractedFields(lead_id=lead.id, raw_output=extracted, **extracted))
+        _legacy_cols = {
+            "skin_problem", "age", "consultation_format", "city", "experience",
+            "consultation_confirmed", "consultation_date", "consultation_time",
+            "name", "contacts",
+        }
+        db.add(AIExtractedFields(
+            lead_id=lead.id, raw_output=extracted,
+            **{k: v for k, v in extracted.items() if k in _legacy_cols},
+        ))
         db.commit()
+        extracted = merge_client_memory(db, lead, extracted, all_messages)
         log_action(
             db,
             lead.id,
