@@ -67,42 +67,48 @@ export default function ChatPage() {
       {/* Header */}
       <div style={{
         borderBottom: "1px solid var(--border)", background: "var(--bg-2)",
-        padding: "14px 20px", display: "flex", alignItems: "center", gap: 14,
+        padding: "11px 14px", display: "flex", alignItems: "center", gap: 10,
         position: "sticky", top: 0, zIndex: 10,
       }}>
-        <Link href="/" style={{ color: "var(--text-3)", display: "flex", alignItems: "center" }}>
-          <ArrowLeft size={16} />
+        <Link href="/" style={{ color: "var(--text-3)", display: "flex", alignItems: "center", flexShrink: 0 }}>
+          <ArrowLeft size={18} />
         </Link>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, color: "var(--text)" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontWeight: 700, fontSize: 14, color: "var(--text)",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
             {data.client_name || "Без имени"}
-            {data.client_phone && (
-              <span style={{ fontWeight: 400, fontSize: 13, color: "var(--text-3)", marginLeft: 10 }}>
-                {data.client_phone}
-              </span>
-            )}
           </div>
-          <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 2 }}>
-            Lead #{data.lead_id} · {data.messages.length} сообщений
+          <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {data.client_phone ? `${data.client_phone} · ` : ""}Lead #{data.lead_id} · {data.messages.length} сообщ.
           </div>
         </div>
         <a
           href={data.amocrm_url}
           target="_blank"
           rel="noopener noreferrer"
+          title="Открыть в amoCRM"
           style={{
-            display: "flex", alignItems: "center", gap: 6,
-            fontSize: 12, color: "var(--accent)",
+            display: "flex", alignItems: "center", gap: 5, flexShrink: 0,
+            color: "var(--primary)",
             background: "var(--bg-3)", border: "1px solid var(--border)",
-            borderRadius: 7, padding: "6px 12px", textDecoration: "none",
+            borderRadius: 7, padding: "7px 10px", textDecoration: "none",
+            fontSize: 12,
           }}
         >
-          <ExternalLink size={12} /> Открыть в amoCRM
+          <ExternalLink size={13} />
+          <span style={{ display: "none" }} className="chat-amo-label">amoCRM</span>
         </a>
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px", maxWidth: 720, width: "100%", margin: "0 auto", display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{
+        flex: 1, overflowY: "auto",
+        padding: "16px 12px",
+        maxWidth: 720, width: "100%", margin: "0 auto",
+        display: "flex", flexDirection: "column", gap: 10,
+      }}>
         {data.messages.length === 0 && (
           <div style={{ textAlign: "center", color: "var(--text-3)", fontSize: 14, marginTop: 60 }}>
             Сообщений нет
@@ -112,18 +118,18 @@ export default function ChatPage() {
           const isBot = m.role === "assistant";
           return (
             <div key={m.id} style={{ display: "flex", flexDirection: "column", alignItems: isBot ? "flex-start" : "flex-end", gap: 3 }}>
-              <div style={{ fontSize: 11, color: "var(--text-3)", display: "flex", alignItems: "center", gap: 4 }}>
+              <div style={{ fontSize: 10, color: "var(--text-3)", display: "flex", alignItems: "center", gap: 4 }}>
                 {isBot ? <><Bot size={10} /> ИИ бот</> : <><User size={10} /> Клиент</>}
                 {m.created_at && <span style={{ marginLeft: 4 }}>{fmt(m.created_at)}</span>}
               </div>
               <div style={{
-                background: isBot ? "var(--bg-2)" : "var(--accent)",
+                background: isBot ? "var(--bg-2)" : "var(--primary)",
                 color: isBot ? "var(--text)" : "#fff",
                 border: isBot ? "1px solid var(--border)" : "none",
                 borderRadius: isBot ? "4px 12px 12px 12px" : "12px 4px 12px 12px",
-                padding: "10px 14px",
+                padding: "9px 13px",
                 fontSize: 13,
-                maxWidth: "80%",
+                maxWidth: "85%",
                 whiteSpace: "pre-wrap",
                 lineHeight: 1.55,
                 wordBreak: "break-word",
