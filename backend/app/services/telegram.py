@@ -154,11 +154,26 @@ def _mem(extracted: dict, key: str, empty: str = "не указано") -> str:
     return escape(str(val)) if val not in (None, "", []) else empty
 
 
-def client_memory_card(extracted: dict | None) -> str:
+def client_memory_card(extracted: dict | None, lead: Lead | None = None, approval_id: int | None = None) -> str:
     """Full client memory card + what's still unknown (for the 🧠 Память button)."""
     e = extracted or {}
+    # Header: whose memory this is
+    header = "🧠 Память"
+    if lead is not None:
+        raw_name = lead.client.name if lead.client else ""
+        _digits = re.sub(r"\D", "", raw_name or "")
+        _name_is_phone = bool(_digits) and len(_digits) >= 9 and _digits == re.sub(r"\s", "", raw_name or "")
+        client_name = "Без имени" if (_name_is_phone or not raw_name) else raw_name
+        raw_contact = (lead.client.phone if lead.client and lead.client.phone else None) or (raw_name if _name_is_phone else None) or lead.contact_id or "-"
+        contact = _fmt_phone(raw_contact) if re.sub(r"\D", "", str(raw_contact)) else str(raw_contact)
+        header = (
+            f"🧠 Память клиента: {escape(client_name)}\n"
+            f"📞 {escape(contact)} · Lead {escape(lead.amocrm_lead_id)}"
+        )
+        if approval_id:
+            header += f" · №{approval_id:07d}"
     card = "\n".join([
-        "🧠 Память",
+        header,
         "",
         f"👤 Имя: {_mem(e, 'name')}",
         f"🎂 Возраст: {_mem(e, 'age', 'не указан')}",
