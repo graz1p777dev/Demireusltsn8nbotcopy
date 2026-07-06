@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     amocrm_status_qualified: int | None = None
     amocrm_status_consultation_scheduled: int | None = None
     amocrm_status_unsorted: int | None = None
+    amocrm_status_purchase: int | None = None  # stage for 'wants to buy' leads
 
     @field_validator("database_url")
     @classmethod

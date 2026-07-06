@@ -213,6 +213,66 @@ def generate_reply(
     )
 
 
+REPLY_CHECK_SYSTEM_PROMPT = """Ты — контролёр качества ответов Айым, помощника косметолога Demi Results.
+Тебе дают историю диалога и черновик ответа. Проверь ответ по чек-листу:
+
+1. Понятно ли из ответа, что ассистент понял, что хочет клиент?
+2. Не повторяет ли ответ информацию/вопросы, которые уже были в диалоге?
+3. Нет ли лишних вопросов (максимум 1-2 вопроса, только нужные)?
+4. Не предлагается ли консультация слишком рано (до понимания проблемы) или повторно после отказа?
+5. Звучит ли ответ как сообщение живого человека (тепло, коротко, без шаблонности)?
+6. Ответ короче 4 предложений?
+
+Верни строго JSON:
+{"ok": true, "fixed_reply": null}
+— если ответ проходит все пункты.
+{"ok": false, "fixed_reply": "исправленный текст"}
+— если есть проблемы: перепиши ответ так, чтобы он прошёл все пункты. Сохраняй язык, тон «на Вы», эмодзи умеренно. Не добавляй новых фактов, цен и слотов.
+"""
+
+
+def verify_reply(dialogue: list[dict], reply: str) -> tuple[str, AIResult | None]:
+    """Self-check pass: validate the draft reply against the quality checklist.
+
+    Returns (final_reply, usage). On any failure returns the original reply.
+    """
+    if not settings.openai_api_key or not reply.strip():
+        return reply, None
+    try:
+        started = perf_counter()
+        # Last few turns are enough context for the checklist
+        recent = _clean_dialogue(dialogue[-10:])
+        payload = json.dumps({"dialogue": recent, "draft_reply": reply}, ensure_ascii=False)
+        response = _client().chat.completions.create(
+            model=settings.openai_extractor_model,
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": REPLY_CHECK_SYSTEM_PROMPT},
+                {"role": "user", "content": payload},
+            ],
+        )
+        latency_ms = int((perf_counter() - started) * 1000)
+        data = json.loads(response.choices[0].message.content or "{}")
+        usage = _result(
+            content="",
+            model=settings.openai_extractor_model,
+            purpose="reply_check",
+            usage=_usage_payload(response),
+            latency_ms=latency_ms,
+            input_cost_per_1m=settings.openai_input_cost_extractor,
+            output_cost_per_1m=settings.openai_output_cost_extractor,
+        )
+        fixed = (data.get("fixed_reply") or "").strip()
+        if not data.get("ok") and fixed:
+            _log.info("reply_check rewrote reply: %.80s -> %.80s", reply, fixed)
+            return fixed, usage
+        return reply, usage
+    except Exception as exc:
+        _log.warning("verify_reply failed: %s", exc)
+        return reply, None
+
+
 def summarize_dialogue(dialogue: list[dict]) -> tuple[str, AIResult | None]:
     """Generate a brief hypervisor summary of the full conversation for managers."""
     if not dialogue:
