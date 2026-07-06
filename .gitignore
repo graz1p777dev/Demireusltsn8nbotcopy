@@ -10,3 +10,6 @@ frontend/npm-debug.log*
 *.pyc
 .DS_Store
 .vercel
+
+# local-only agent docs (не коммитить)
+BACKEND_AGENT_BRIEF.md
