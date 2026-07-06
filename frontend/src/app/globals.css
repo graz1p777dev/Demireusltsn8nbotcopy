@@ -435,6 +435,8 @@ button:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
 ══════════════════════════════════════════════════════ */
 .hamburger-btn { display: none; }
 .back-btn      { display: none; }
+.chat-amo-label { display: none; }
+@media (min-width: 480px) { .chat-amo-label { display: inline !important; } }
 .sidebar-overlay {
   display: none;
   position: fixed; inset: 0;
