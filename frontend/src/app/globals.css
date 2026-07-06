@@ -278,12 +278,14 @@ html, body {
 .msg { display: flex; flex-direction: column; max-width: 76%; }
 .msg.user      { align-self: flex-start; }
 .msg.assistant { align-self: flex-end; }
+.msg.manager   { align-self: flex-end; }
 
 .msg-role {
   font-size: 10px; color: var(--text-3); font-family: var(--mono);
   margin-bottom: 4px; display: flex; align-items: center; gap: 5px; font-weight: 500;
 }
 .msg.assistant .msg-role { text-align: right; justify-content: flex-end; }
+.msg.manager .msg-role { text-align: right; justify-content: flex-end; color: #22c55e; }
 
 .msg-bubble {
   padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.6;
@@ -296,9 +298,14 @@ html, body {
   background: var(--primary); color: #fff;
   border-bottom-right-radius: 3px; box-shadow: 0 2px 8px rgba(58,123,213,.3);
 }
+.msg.manager .msg-bubble {
+  background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.4); color: var(--text);
+  border-bottom-right-radius: 3px;
+}
 
 .msg-footer { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
-.msg.assistant .msg-footer { justify-content: flex-end; }
+.msg.assistant .msg-footer,
+.msg.manager .msg-footer { justify-content: flex-end; }
 .msg-ts { font-size: 10px; color: var(--text-3); font-family: var(--mono); }
 
 /* ══════════════════════════════════════════════════════

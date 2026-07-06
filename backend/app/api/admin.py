@@ -22,6 +22,7 @@ from app.models.entities import (
     Client,
     ClientMemory,
     ConsultationSlot,
+    Conversation,
     Lead,
     Message,
     Setting,
@@ -208,6 +209,20 @@ def send_manual_message(lead_id: int, payload: ManualMessage, db: Session = Depe
         raise HTTPException(404)
     session = amocrm.create_chat_session()
     result = amocrm.send_chat_message(session, lead.chat_id or "", lead.amocrm_lead_id, lead.contact_id, payload.text)
+    # Record in chat history as a consultant message
+    conversation = db.scalar(select(Conversation).where(Conversation.lead_id == lead.id))
+    if not conversation:
+        conversation = Conversation(lead_id=lead.id, chat_id=lead.chat_id)
+        db.add(conversation)
+        db.flush()
+    db.add(Message(
+        conversation_id=conversation.id,
+        lead_id=lead.id,
+        role="manager",
+        direction="outgoing",
+        text=payload.text,
+        status="sent",
+    ))
     db.add(ActionLog(lead_id=lead.id, action="operator.send_message", status="success", request_payload=payload.model_dump(), response_payload=result))
     db.commit()
     return {"ok": True, "result": result}

@@ -89,6 +89,13 @@ async def amocrm_webhook(
         body = await request.json()
     incoming = parse_amocrm_webhook(body)
 
+    # Outgoing message = the human consultant wrote directly in amoCRM.
+    # Store it in the chat history as a consultant message; never run the AI pipeline.
+    if incoming.direction == "outgoing":
+        from app.services.repository import store_outgoing_message
+        stored = store_outgoing_message(db, incoming)
+        return {"ok": True, "queued": False, "reason": "outgoing_consultant", "stored": stored}
+
     # Handle voice messages: transcribe and language-filter before processing
     _VOICE_TYPES = {"voice", "audio"}
     _voice_url = incoming.attachment_link or incoming.media or None
