@@ -8,6 +8,18 @@ from zoneinfo import ZoneInfo
 import httpx
 
 _PICTURE_RE = re.compile(r'\[(?:picture|photo|image|media)\]\s*(https?://\S+)')
+_VOICE_RE = re.compile(r'\[(?:voice|audio)\]\s*(https?://\S+)')
+
+
+def _fmt_client_message(text: str) -> str:
+    """Format client message for Telegram card display."""
+    m = _PICTURE_RE.match(text.strip())
+    if m:
+        return f'📷 <a href="{m.group(1)}">фотография</a>'
+    m = _VOICE_RE.match(text.strip())
+    if m:
+        return f'🎤 <a href="{m.group(1)}">голосовое сообщение</a>'
+    return escape(text)
 
 
 def _fmt_phone(raw: str) -> str:
@@ -210,7 +222,7 @@ def approval_card(
         + time_line
         + "\n"
         + summary_block
-        + f'💬 <b>Сообщение клиента:</b>\n"{escape(approval.client_message)}"\n\n'
+        + f'💬 <b>Сообщение клиента:</b>\n"{_fmt_client_message(approval.client_message)}"\n\n'
         + translation_block
         + f"🤖 <b>Ответ бота:</b>\n{escape(reply)}\n\n"
         f"🧠 <b>Память:</b>\n{memory_lines(approval.extracted_fields)}\n\n"
