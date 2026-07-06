@@ -271,6 +271,7 @@ def approval_keyboard(approval_id: int, lead: Lead, has_templates: bool = False)
         [{"text": "📅 Предложить консультацию", "callback_data": f"consult:{approval_id}"}],
         [{"text": "📂 Переместить на этап", "callback_data": f"move_stage:{approval_id}"}],
         [{"text": "🌐 Перевести ответ", "callback_data": f"translate:{approval_id}"}],
+        [{"text": "💡 Почему такой ответ?", "callback_data": f"why:{approval_id}"}],
         [{"text": "📝 Заметка", "callback_data": f"note:{approval_id}"}],
         [
             {"text": "📋 Открыть в CRM", "url": f"{settings.frontend_url}/chat/{lead.amocrm_lead_id}"},

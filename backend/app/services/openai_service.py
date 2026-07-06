@@ -1,15 +1,18 @@
 import io
 import json
+import logging
 import re
 from time import perf_counter
 
 import httpx
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
 from app.services.prompts import EXTRACTOR_SYSTEM_PROMPT, SALES_AGENT_SYSTEM_PROMPT, SALES_INTENT_SYSTEM_PROMPT
+
+_log = logging.getLogger(__name__)
 
 _PICTURE_RE = re.compile(r'\[picture\]\s*(https?://\S+)')
 
@@ -80,6 +83,33 @@ def _extract_image_urls(dialogue: list[dict]) -> list[str]:
     return urls
 
 
+def _download_images_as_data_urls(urls: list[str], limit: int = 3) -> list[str]:
+    """Download images ourselves and return base64 data URLs.
+
+    amoCRM drive links are not publicly accessible, so OpenAI cannot fetch
+    them server-side (returns 400). Downloading and inlining as base64
+    avoids that. Images that fail to download are skipped.
+    """
+    import base64
+
+    data_urls: list[str] = []
+    with httpx.Client(timeout=15, follow_redirects=True) as client:
+        for url in urls[-limit:]:
+            try:
+                resp = client.get(url)
+                if not resp.is_success or not resp.content:
+                    _log.warning("image download failed url=%.80s status=%s", url, resp.status_code)
+                    continue
+                content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
+                if not content_type.startswith("image/"):
+                    content_type = "image/jpeg"
+                encoded = base64.b64encode(resp.content).decode()
+                data_urls.append(f"data:{content_type};base64,{encoded}")
+            except Exception as exc:
+                _log.warning("image download error url=%.80s: %s", url, exc)
+    return data_urls
+
+
 def _clean_dialogue(dialogue: list[dict]) -> list[dict]:
     cleaned = []
     for msg in dialogue:
@@ -137,8 +167,9 @@ def generate_reply(
         ensure_ascii=False,
     )
 
-    if image_urls:
-        content: list[dict] = [{"type": "image_url", "image_url": {"url": url}} for url in image_urls]
+    data_urls = _download_images_as_data_urls(image_urls) if image_urls else []
+    if data_urls:
+        content: list[dict] = [{"type": "image_url", "image_url": {"url": url}} for url in data_urls]
         content.append({"type": "text", "text": context_text})
         user_message: dict = {"role": "user", "content": content}
     else:
@@ -147,14 +178,28 @@ def generate_reply(
     _base_prompt = system_prompt or SALES_AGENT_SYSTEM_PROMPT
     if memory_context and memory_context.strip():
         _base_prompt = _base_prompt + "\n\n---\nПАМЯТЬ МАГАЗИНА (используй эти данные при ответах):\n" + memory_context.strip()
-    response = _client().chat.completions.create(
-        model=_model,
-        temperature=0.5,
-        messages=[
-            {"role": "system", "content": _base_prompt},
-            user_message,
-        ],
-    )
+    try:
+        response = _client().chat.completions.create(
+            model=_model,
+            temperature=0.5,
+            messages=[
+                {"role": "system", "content": _base_prompt},
+                user_message,
+            ],
+        )
+    except BadRequestError:
+        if not data_urls:
+            raise
+        # Images rejected by the API — retry text-only so the client still gets a reply
+        _log.warning("generate_reply 400 with images, retrying text-only")
+        response = _client().chat.completions.create(
+            model=_model,
+            temperature=0.5,
+            messages=[
+                {"role": "system", "content": _base_prompt},
+                {"role": "user", "content": context_text},
+            ],
+        )
     latency_ms = int((perf_counter() - started) * 1000)
     return _result(
         content=(response.choices[0].message.content or "").strip(),
@@ -397,6 +442,40 @@ def ai_edit_reply(original_reply: str, client_message: str, edit_prompt: str) ->
         latency_ms=latency_ms,
         input_cost_per_1m=settings.openai_input_cost_sales,
         output_cost_per_1m=settings.openai_output_cost_sales,
+    )
+
+
+def explain_reply(client_message: str, reply: str, conversation_summary: str | None = None) -> AIResult:
+    """Explain briefly why the bot answered the way it did (for managers)."""
+    if not settings.openai_api_key:
+        return AIResult(content="", model=settings.openai_extractor_model, purpose="explain_reply")
+    started = perf_counter()
+    system = (
+        "Ты — AI-ассистент Айым магазина косметики Demi Results, объясняющий менеджеру логику своего ответа. "
+        "Тебе дают сообщение клиента и твой ответ. Объясни КРАТКО (2-4 строки, от первого лица) почему ты ответила именно так: "
+        "какую цель преследовал ответ, почему задан этот вопрос или предложена консультация. "
+        "Пиши просто и по делу, на русском. Без вступлений и заключений."
+    )
+    user = f"Сообщение клиента:\n{client_message}\n\nМой ответ:\n{reply}"
+    if conversation_summary:
+        user = f"Контекст диалога:\n{conversation_summary}\n\n{user}"
+    response = _client().chat.completions.create(
+        model=settings.openai_extractor_model,
+        temperature=0.3,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    )
+    latency_ms = int((perf_counter() - started) * 1000)
+    return _result(
+        content=(response.choices[0].message.content or "").strip(),
+        model=settings.openai_extractor_model,
+        purpose="explain_reply",
+        usage=_usage_payload(response),
+        latency_ms=latency_ms,
+        input_cost_per_1m=settings.openai_input_cost_extractor,
+        output_cost_per_1m=settings.openai_output_cost_extractor,
     )
 
 
