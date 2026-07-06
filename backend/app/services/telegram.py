@@ -133,6 +133,7 @@ def chat_history_url(lead: Lead) -> str:
 
 
 def memory_lines(extracted: dict | None) -> str:
+    """Compact memory block for the approval card."""
     if not extracted:
         return "- Пока нет извлеченной памяти"
     skin_problem = ", ".join(extracted.get("skin_problem") or []) or "не указано"
@@ -144,6 +145,66 @@ def memory_lines(extracted: dict | None) -> str:
             f"- Была консультация: {'да' if extracted.get('consultation_confirmed') else 'нет'}",
         ]
     )
+
+
+def _mem(extracted: dict, key: str, empty: str = "не указано") -> str:
+    val = extracted.get(key)
+    if isinstance(val, list):
+        val = ", ".join(str(v) for v in val)
+    return escape(str(val)) if val not in (None, "", []) else empty
+
+
+def client_memory_card(extracted: dict | None) -> str:
+    """Full client memory card + what's still unknown (for the 🧠 Память button)."""
+    e = extracted or {}
+    card = "\n".join([
+        "🧠 Память",
+        "",
+        f"👤 Имя: {_mem(e, 'name')}",
+        f"🎂 Возраст: {_mem(e, 'age', 'не указан')}",
+        f"📍 Город: {_mem(e, 'city', 'не указан')}",
+        "",
+        f"✨ Тип кожи: {_mem(e, 'skin_type', 'не указан')}",
+        f"🚨 Основная проблема: {_mem(e, 'skin_problem', 'не указана')}",
+        f"🎯 Цель клиента: {_mem(e, 'goal', 'не указана')}",
+        f"⏳ Длительность проблемы: {_mem(e, 'problem_duration', 'неизвестно')}",
+        "",
+        f"🧴 Использует уход: {_mem(e, 'uses_care', 'нет данных')}",
+        f"💊 Аллергии: {_mem(e, 'allergies', 'неизвестно')}",
+        f"🏥 Была консультация: {'да' if e.get('consultation_confirmed') else 'нет'}",
+        "",
+        f"🛍️ Покупал ранее: {_mem(e, 'bought_before', 'нет данных')}",
+        f"📦 Какие средства использовал: {_mem(e, 'products_used', 'неизвестно')}",
+        f"⭐ Что помогло: {_mem(e, 'what_helped', 'неизвестно')}",
+        f"❌ Что не помогло: {_mem(e, 'what_not_helped', 'неизвестно')}",
+        "",
+        f"📅 Первый контакт: {_mem(e, '_first_contact', 'сегодня')}",
+        f"📅 Последний контакт: {_mem(e, '_last_contact', 'сегодня')}",
+        f"📝 Последнее действие: {_mem(e, 'last_action', '—')}",
+    ])
+
+    def _missing(key: str) -> bool:
+        return e.get(key) in (None, "", [])
+
+    critical = [label for key, label in [
+        ("skin_type", "Тип кожи"), ("skin_problem", "Основную проблему"), ("goal", "Цель клиента"),
+    ] if _missing(key)]
+    important = [label for key, label in [
+        ("age", "Возраст"), ("uses_care", "Использует ли уход"), ("allergies", "Есть ли аллергии"),
+    ] if _missing(key)]
+    useful = [label for key, label in [
+        ("products_used", "Какие средства уже использовал"), ("what_helped", "Что помогло"), ("what_not_helped", "Что не помогло"),
+    ] if _missing(key)]
+
+    if critical or important or useful:
+        card += "\n\n❓ Нужно узнать\n"
+        if critical:
+            card += "\n🔴 Критично\n" + "\n".join(f"• {x}" for x in critical)
+        if important:
+            card += "\n\n🟠 Важно\n" + "\n".join(f"• {x}" for x in important)
+        if useful:
+            card += "\n\n🟡 Полезно\n" + "\n".join(f"• {x}" for x in useful)
+    return card
 
 
 def _build_hashtags(contact: str, extracted: dict | None) -> str:

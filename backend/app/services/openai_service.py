@@ -125,8 +125,9 @@ def generate_reply(
     system_prompt: str | None = None,
     memory_context: str | None = None,
     use_sales_model: bool = False,
+    model_override: str | None = None,
 ) -> AIResult:
-    _model = settings.openai_model_sales if use_sales_model else settings.openai_model_simple
+    _model = model_override or (settings.openai_model_sales if use_sales_model else settings.openai_model_simple)
     _in_cost = settings.openai_input_cost_sales if use_sales_model else settings.openai_input_cost_simple
     _out_cost = settings.openai_output_cost_sales if use_sales_model else settings.openai_output_cost_simple
     if not settings.openai_api_key:

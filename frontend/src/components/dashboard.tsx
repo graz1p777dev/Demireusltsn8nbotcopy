@@ -584,6 +584,88 @@ export function PromptPanel() {
 }
 
 
+export function BotModelPanel() {
+  const [models, setModels] = useState<string[]>([]);
+  const [modelSimple, setModelSimple] = useState("");
+  const [modelSales, setModelSales] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      apiGet<string[]>("/admin/openai-models"),
+      apiGet<{ model_simple: string; model_sales: string }>("/admin/bot-model"),
+    ])
+      .then(([m, cfg]) => {
+        setModels(m);
+        setModelSimple(cfg.model_simple);
+        setModelSales(cfg.model_sales);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  async function save() {
+    setSaving(true);
+    try {
+      await apiJson("/admin/bot-model", "PATCH", { model_simple: modelSimple, model_sales: modelSales });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const selStyle: React.CSSProperties = {
+    width: "100%", background: "var(--bg-3)", border: "1px solid var(--border)",
+    color: "var(--text)", borderRadius: 8, padding: "8px 10px", fontSize: 12, outline: "none",
+  };
+
+  const renderOptions = (current: string) => (
+    <>
+      {current && !models.includes(current) && <option value={current}>{current}</option>}
+      {models.map(m => <option key={m} value={m}>{m}</option>)}
+    </>
+  );
+
+  return (
+    <section style={{ padding: "16px 20px" }}>
+      <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 14 }}>
+        Модели GPT для ответов бота. «Простые вопросы» — обычные сообщения, «Продажи» — возражения и сложные диалоги.
+      </p>
+      {loading ? (
+        <div className="muted" style={{ fontSize: 13 }}>Загрузка моделей...</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 420 }}>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-2)", display: "block", marginBottom: 5 }}>
+              Простые вопросы
+            </label>
+            <select value={modelSimple} onChange={e => setModelSimple(e.target.value)} style={selStyle}>
+              {renderOptions(modelSimple)}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 11, fontWeight: 600, color: "var(--text-2)", display: "block", marginBottom: 5 }}>
+              Продажи / возражения
+            </label>
+            <select value={modelSales} onChange={e => setModelSales(e.target.value)} style={selStyle}>
+              {renderOptions(modelSales)}
+            </select>
+          </div>
+          <div>
+            <button className="btn-primary" style={{ padding: "7px 18px", fontSize: 12 }} onClick={save} disabled={saving}>
+              {saving ? "Сохранение..." : saved ? "✓ Сохранено" : "Сохранить"}
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+
 export function BotMemoryPanel() {
   const [memory, setMemory] = useState("");
   const [original, setOriginal] = useState("");

@@ -323,7 +323,7 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
         if action == "memory":
             telegram.answer_callback(callback_id)
             if approval:
-                telegram.send_text(manager_id, telegram.memory_lines(approval.extracted_fields))
+                telegram.send_text(manager_id, telegram.client_memory_card(approval.extracted_fields))
             return {"ok": True, "action": action}
         if action == "why":
             if not approval:

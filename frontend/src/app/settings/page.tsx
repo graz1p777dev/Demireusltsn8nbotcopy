@@ -1,6 +1,6 @@
-import { UsersPanel, PromptPanel, BotMemoryPanel, ManagersPanel, AiTestPanel, ChangelogPanel, TemplatesPanel, StopWordsPanel, SectionShell } from "@/components/dashboard";
+import { UsersPanel, PromptPanel, BotMemoryPanel, BotModelPanel, ManagersPanel, AiTestPanel, ChangelogPanel, TemplatesPanel, StopWordsPanel, SectionShell } from "@/components/dashboard";
 import { AppShell } from "@/components/app-shell";
-import { Users, Bot, MessageCircle, FlaskConical, ScrollText, BookOpen, ShieldAlert, Brain } from "lucide-react";
+import { Users, Bot, MessageCircle, FlaskConical, ScrollText, BookOpen, ShieldAlert, Brain, Cpu } from "lucide-react";
 
 export default function SettingsPage() {
   return (
@@ -10,6 +10,9 @@ export default function SettingsPage() {
       </SectionShell>
       <SectionShell id="prompt" title="Промпт бота" icon={<Bot size={14} />}>
         <PromptPanel />
+      </SectionShell>
+      <SectionShell id="bot-model" title="Модель бота" icon={<Cpu size={14} />}>
+        <BotModelPanel />
       </SectionShell>
       <SectionShell id="bot-memory" title="Память бота (знания о магазине)" icon={<Brain size={14} />}>
         <BotMemoryPanel />
