@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { apiGet } from "@/lib/api";
-import { Bot, User, ExternalLink, ArrowLeft } from "lucide-react";
+import { Bot, User, ExternalLink, ArrowLeft, Headset } from "lucide-react";
 import Link from "next/link";
 
 type ChatMessage = {
@@ -115,18 +115,27 @@ export default function ChatPage() {
           </div>
         )}
         {data.messages.map(m => {
-          const isBot = m.role === "assistant";
+          const isClient = m.role === "user";
+          const isManager = m.role === "manager";
+          // client → right; bot & consultant → left
+          const label = isClient
+            ? <><User size={10} /> Клиент</>
+            : isManager
+              ? <><Headset size={10} /> Консультант</>
+              : <><Bot size={10} /> ИИ бот</>;
+          const bubbleStyle: React.CSSProperties = isClient
+            ? { background: "var(--primary)", color: "#fff", border: "none", borderRadius: "12px 4px 12px 12px" }
+            : isManager
+              ? { background: "rgba(34,197,94,.12)", color: "var(--text)", border: "1px solid rgba(34,197,94,.4)", borderRadius: "4px 12px 12px 12px" }
+              : { background: "var(--bg-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px 12px 12px 12px" };
           return (
-            <div key={m.id} style={{ display: "flex", flexDirection: "column", alignItems: isBot ? "flex-start" : "flex-end", gap: 3 }}>
-              <div style={{ fontSize: 10, color: "var(--text-3)", display: "flex", alignItems: "center", gap: 4 }}>
-                {isBot ? <><Bot size={10} /> ИИ бот</> : <><User size={10} /> Клиент</>}
-                {m.created_at && <span style={{ marginLeft: 4 }}>{fmt(m.created_at)}</span>}
+            <div key={m.id} style={{ display: "flex", flexDirection: "column", alignItems: isClient ? "flex-end" : "flex-start", gap: 3 }}>
+              <div style={{ fontSize: 10, color: isManager ? "#22c55e" : "var(--text-3)", display: "flex", alignItems: "center", gap: 4 }}>
+                {label}
+                {m.created_at && <span style={{ marginLeft: 4, color: "var(--text-3)" }}>{fmt(m.created_at)}</span>}
               </div>
               <div style={{
-                background: isBot ? "var(--bg-2)" : "var(--primary)",
-                color: isBot ? "var(--text)" : "#fff",
-                border: isBot ? "1px solid var(--border)" : "none",
-                borderRadius: isBot ? "4px 12px 12px 12px" : "12px 4px 12px 12px",
+                ...bubbleStyle,
                 padding: "9px 13px",
                 fontSize: 13,
                 maxWidth: "85%",

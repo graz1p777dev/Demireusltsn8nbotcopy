@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { RefreshCw, Send, Bot, User, Power, PowerOff, MessageSquare, X, ChevronDown, ChevronRight, LogOut, UserPlus, Trash2, Shield, ShieldOff, Download, Plus, Pencil, ArrowLeft, ImagePlus, Mic, Settings2 } from "lucide-react";
+import { RefreshCw, Send, Bot, User, Power, PowerOff, MessageSquare, X, ChevronDown, ChevronRight, LogOut, UserPlus, Trash2, Shield, ShieldOff, Download, Plus, Pencil, ArrowLeft, ImagePlus, Mic, Settings2, Headset } from "lucide-react";
 
 import { useRouter } from "next/navigation";
 import { apiGet, apiJson, Conversation, API_BASE } from "@/lib/api";
@@ -354,7 +354,11 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
           {(detail?.messages ?? []).map((m, i) => (
             <div className={`msg ${m.role}`} key={`${m.created_at}-${i}`}>
               <div className="msg-role">
-                {m.role === "user" ? <><User size={11} /> Клиент</> : <><Bot size={11} /> AI Бот</>}
+                {m.role === "user"
+                  ? <><User size={11} /> Клиент</>
+                  : m.role === "manager"
+                    ? <><Headset size={11} /> Консультант</>
+                    : <><Bot size={11} /> AI Бот</>}
               </div>
               <div className="msg-bubble">{m.text}</div>
               <div className="msg-footer">
@@ -906,6 +910,18 @@ type ChangeEntry = { date: string; tag: "feature" | "fix" | "improve" | "delete"
 type ChangeGroup = { version: string; date: string; entries: ChangeEntry[] };
 
 const CHANGELOG: ChangeGroup[] = [
+  {
+    version: "1.14",
+    date: "06.07.2026",
+    entries: [
+      { date: "06.07.2026", tag: "feature", text: "История чата: сообщения консультанта (написанные напрямую в amoCRM или из CRM) теперь видны отдельно — зелёные, с иконкой «Консультант»" },
+      { date: "06.07.2026", tag: "feature", text: "Карточка клиента 🧠: полная память + блок «Нужно узнать» с уровнями 🔴 Критично / 🟠 Важно / 🟡 Полезно" },
+      { date: "06.07.2026", tag: "feature", text: "Аналитика: расход токенов по периодам (сегодня, день, месяц, год) с ценой в долларах" },
+      { date: "06.07.2026", tag: "feature", text: "Тест ИИ бота: выбор модели, температуры, тестовый промпт (боевой не меняется), фото и голосовые" },
+      { date: "06.07.2026", tag: "feature", text: "Настройки → Модель бота: выбор любой GPT-модели для ответов" },
+      { date: "06.07.2026", tag: "fix", text: "Отчёты: страница больше не висит в бесконечной загрузке и получила нормальный дизайн" },
+    ],
+  },
   {
     version: "1.13",
     date: "01.07.2026",
