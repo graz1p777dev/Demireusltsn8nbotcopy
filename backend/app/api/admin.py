@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import desc, func, select, text
@@ -314,41 +314,109 @@ def update_bot_memory(body: BotMemoryUpdate, db: Session = Depends(get_db)) -> d
 class AiTestRequest(BaseModel):
     message: str
     history: list[dict] = []  # [{"role": "user"|"assistant", "content": "..."}]
+    model: str = ""                    # empty = prod model
+    temperature: float = 0.5
+    max_tokens: int | None = None
+    system_prompt: str = ""            # test prompt override — prod prompt is NOT touched
+    memory: str | None = None          # None = use prod bot_memory
+    is_working_hours: bool = True
+    minutes_since: int = 9999
+    lang: str = "ru"
+    images: list[str] = []             # data URLs of uploaded images
+
+
+# Rough $ per 1M tokens (input, output) for the tester cost estimate
+_TEST_COST_MAP = {
+    "gpt-4.1-mini": (0.40, 1.60), "gpt-4.1": (2.0, 8.0),
+    "gpt-4o": (2.50, 10.0), "gpt-4o-mini": (0.15, 0.60),
+    "gpt-5.1": (1.25, 10.0), "gpt-5.5": (5.0, 30.0),
+    "o4-mini": (1.10, 4.40),
+}
 
 
 @router.post("/ai-test")
 def ai_test(body: AiTestRequest, db: Session = Depends(get_db)) -> dict:
-    from app.services.openai_service import generate_reply
+    from time import perf_counter
+    from app.services.openai_service import _client
     from app.services.prompts import SALES_AGENT_SYSTEM_PROMPT
-    from zoneinfo import ZoneInfo
 
-    row = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt"))
-    system_prompt = row.value if row else SALES_AGENT_SYSTEM_PROMPT
+    # Test prompt override; otherwise the prod prompt from DB
+    if body.system_prompt.strip():
+        system_prompt = body.system_prompt
+    else:
+        row = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt"))
+        system_prompt = row.value if row else SALES_AGENT_SYSTEM_PROMPT
+
+    if body.memory is not None:
+        memory_context = body.memory
+    else:
+        mem_row = db.scalar(select(Setting).where(Setting.key == "bot_memory"))
+        memory_context = mem_row.value if mem_row else ""
+    if memory_context.strip():
+        system_prompt += "\n\n---\nПАМЯТЬ МАГАЗИНА (используй эти данные при ответах):\n" + memory_context.strip()
+
+    model = body.model or app_settings.openai_model_simple
 
     now = datetime.now(ZoneInfo(app_settings.timezone))
-    slot_context = {
-        "now_bishkek": now.strftime("%H:%M"),
-        "date_bishkek": now.strftime("%d.%m.%Y"),
-        "is_working_hours": True,
-        "minutes_since_last_message": 9999,
-        "free_slots": [],
-        "client_language": "ru",
-    }
+    time_note = f"[СИСТЕМНОЕ ВРЕМЯ БИШКЕК: {now.strftime('%H:%M')} {now.strftime('%d.%m.%Y')}]\n"
+    if body.minutes_since <= 60:
+        time_note += "[НЕ ПРИВЕТСТВУЙ — диалог продолжается, прошло менее 60 минут.]\n"
+    else:
+        time_note += "[ПРИВЕТСТВИЕ: если нет предыдущих ответов ассистента — поздоровайся один раз.]\n"
+    if not body.is_working_hours:
+        time_note += "[НЕРАБОЧЕЕ ВРЕМЯ. Сообщи что магазин работает с 10:00 до 21:00. НЕ предлагай консультацию.]\n"
+    if body.lang and body.lang != "ru":
+        _lang_names = {"ky": "кыргызском", "kz": "казахском", "en": "английском", "uz": "узбекском"}
+        label = _lang_names.get(body.lang, body.lang)
+        time_note += f"[ЯЗЫК КЛИЕНТА: {label} ({body.lang}). СТРОГО: пиши ответ ТОЛЬКО на {label} языке.]\n"
 
-    dialogue = [
-        {"role": m["role"], "content": m["content"]}
-        for m in body.history
-    ]
-    dialogue.append({"role": "user", "content": body.message})
-
-    mem_row = db.scalar(select(Setting).where(Setting.key == "bot_memory"))
-    memory_context = mem_row.value if mem_row else None
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    messages += [{"role": m["role"], "content": m["content"]} for m in body.history]
+    if body.images:
+        content: list[dict] = [{"type": "image_url", "image_url": {"url": u}} for u in body.images[:3]]
+        content.append({"type": "text", "text": time_note + body.message})
+        messages.append({"role": "user", "content": content})
+    else:
+        messages.append({"role": "user", "content": time_note + body.message})
 
     try:
-        result = generate_reply(dialogue, slot_context, system_prompt=system_prompt, memory_context=memory_context)
-        return {"ok": True, "reply": str(result.content), "tokens": result.total_tokens, "model": result.model}
+        started = perf_counter()
+        kwargs: dict = {"model": model, "temperature": body.temperature, "messages": messages}
+        if body.max_tokens:
+            kwargs["max_tokens"] = body.max_tokens
+        response = _client().chat.completions.create(**kwargs)
+        latency_ms = int((perf_counter() - started) * 1000)
+        usage = response.usage
+        p_tok = usage.prompt_tokens if usage else 0
+        c_tok = usage.completion_tokens if usage else 0
+        in_c, out_c = _TEST_COST_MAP.get(model, (1.0, 4.0))
+        cost = p_tok / 1_000_000 * in_c + c_tok / 1_000_000 * out_c
+        return {
+            "ok": True,
+            "reply": (response.choices[0].message.content or "").strip(),
+            "tokens": (usage.total_tokens if usage else 0),
+            "cost": round(cost, 6),
+            "latency_ms": latency_ms,
+            "model": model,
+        }
     except Exception as e:
         return {"ok": False, "reply": f"Ошибка: {e}"}
+
+
+@router.post("/ai-test/transcribe")
+async def ai_test_transcribe(file: UploadFile = File(...)) -> dict:
+    """Transcribe an uploaded voice message (for the CRM tester)."""
+    from app.services.openai_service import _client
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty file")
+    buf = io.BytesIO(data)
+    buf.name = file.filename or "voice.ogg"
+    try:
+        tr = _client().audio.transcriptions.create(model="whisper-1", file=buf)
+        return {"ok": True, "text": (tr.text or "").strip()}
+    except Exception as e:
+        return {"ok": False, "text": "", "error": str(e)}
 
 
 @router.get("/analytics")
@@ -841,6 +909,34 @@ def analytics_funnel(db: Session = Depends(get_db)) -> list[dict]:
 
 
 # ── Analytics: Manager Efficiency ─────────────────────────────────────────────
+
+@router.get("/analytics/tokens")
+def analytics_tokens(db: Session = Depends(get_db)) -> dict:
+    """Token usage & cost: today, daily/monthly averages, this year."""
+    tz = app_settings.timezone
+    row = db.execute(text(f"""
+        SELECT
+            COALESCE(SUM(total_tokens) FILTER (WHERE (created_at AT TIME ZONE '{tz}')::date = (now() AT TIME ZONE '{tz}')::date), 0),
+            COALESCE(SUM(total_cost)   FILTER (WHERE (created_at AT TIME ZONE '{tz}')::date = (now() AT TIME ZONE '{tz}')::date), 0),
+            COALESCE(SUM(total_tokens) FILTER (WHERE created_at >= now() - interval '30 days'), 0),
+            COALESCE(SUM(total_cost)   FILTER (WHERE created_at >= now() - interval '30 days'), 0),
+            COALESCE(SUM(total_tokens) FILTER (WHERE date_trunc('year', created_at AT TIME ZONE '{tz}') = date_trunc('year', now() AT TIME ZONE '{tz}')), 0),
+            COALESCE(SUM(total_cost)   FILTER (WHERE date_trunc('year', created_at AT TIME ZONE '{tz}') = date_trunc('year', now() AT TIME ZONE '{tz}')), 0),
+            COALESCE(SUM(total_tokens), 0),
+            COALESCE(SUM(total_cost), 0),
+            COUNT(DISTINCT (created_at AT TIME ZONE '{tz}')::date)
+        FROM ai_usage
+    """)).fetchone()
+    today_tok, today_cost, m30_tok, m30_cost, year_tok, year_cost, all_tok, all_cost, active_days = row
+    days30 = min(30, max(1, int(active_days)))
+    return {
+        "today": {"tokens": int(today_tok), "cost": round(float(today_cost), 4)},
+        "avg_day": {"tokens": int(m30_tok / days30), "cost": round(float(m30_cost) / days30, 4)},
+        "avg_month": {"tokens": int(m30_tok), "cost": round(float(m30_cost), 4)},
+        "year": {"tokens": int(year_tok), "cost": round(float(year_cost), 4)},
+        "all_time": {"tokens": int(all_tok), "cost": round(float(all_cost), 4)},
+    }
+
 
 @router.get("/analytics/managers")
 def analytics_managers(db: Session = Depends(get_db)) -> list[dict]:

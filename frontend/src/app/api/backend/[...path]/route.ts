@@ -24,7 +24,8 @@ async function proxy(request: NextRequest, context: RouteContext) {
   const response = await fetch(backendUrl(path, request.nextUrl.search), {
     method: request.method,
     headers,
-    body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.text(),
+    // arrayBuffer keeps binary bodies (file uploads) intact — text() corrupts them
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
     cache: "no-store",
   });
 
