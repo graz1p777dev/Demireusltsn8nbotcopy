@@ -846,19 +846,29 @@ def analytics_funnel(db: Session = Depends(get_db)) -> list[dict]:
 def analytics_managers(db: Session = Depends(get_db)) -> list[dict]:
     rows = db.execute(text("""
         SELECT
-            response->>'manager_id' AS manager_id,
-            COUNT(*) FILTER (WHERE action = 'approval.approved') AS approved,
-            COUNT(*) FILTER (WHERE action = 'approval.rejected') AS rejected,
-            COUNT(*) FILTER (WHERE action = 'approval.edited') AS edited,
-            COUNT(*) FILTER (WHERE action = 'approval.saved') AS saved
-        FROM action_logs
-        WHERE action IN ('approval.approved','approval.rejected','approval.edited','approval.saved')
-          AND response->>'manager_id' IS NOT NULL
-        GROUP BY response->>'manager_id'
+            manager_telegram_id,
+            COUNT(*) FILTER (WHERE status IN ('approved','sent')) AS approved,
+            COUNT(*) FILTER (WHERE status = 'rejected') AS rejected,
+            COUNT(*) FILTER (WHERE edited_reply IS NOT NULL) AS edited,
+            COUNT(*) FILTER (WHERE status = 'saved') AS saved
+        FROM approval_requests
+        WHERE manager_telegram_id IS NOT NULL
+        GROUP BY manager_telegram_id
         ORDER BY approved DESC
     """)).fetchall()
+    # Resolve manager names from settings
+    names: dict[str, str] = {}
+    mrow = _get_managers_setting(db)
+    if mrow and mrow.value:
+        try:
+            names = {str(m["chat_id"]): m.get("name", "") for m in _json.loads(mrow.value)}
+        except Exception:
+            names = {}
     return [
-        {"manager_id": r[0], "approved": int(r[1]), "rejected": int(r[2]), "edited": int(r[3]), "saved": int(r[4])}
+        {
+            "manager_id": names.get(str(r[0]), str(r[0])),
+            "approved": int(r[1]), "rejected": int(r[2]), "edited": int(r[3]), "saved": int(r[4]),
+        }
         for r in rows
     ]
 

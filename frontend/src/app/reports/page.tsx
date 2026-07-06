@@ -24,7 +24,8 @@ export default function ReportsPage() {
 
   const load = async () => {
     setLoading(true);
-    const [d, bl, sw, fn, mg, br] = await Promise.all([
+    // allSettled: one failed endpoint must not hang the whole page
+    const [d, bl, sw, fn, mg, br] = await Promise.allSettled([
       apiGet<DayRow[]>("/admin/reports/daily?days=30"),
       apiGet<BlacklistEntry[]>("/admin/blacklist"),
       apiGet<{ words: string[] }>("/admin/stop-words"),
@@ -32,12 +33,12 @@ export default function ReportsPage() {
       apiGet<ManagerRow[]>("/admin/analytics/managers"),
       apiGet<BestReply[]>("/admin/analytics/best-replies?limit=15"),
     ]);
-    setDaily(d);
-    setBlacklist(bl);
-    setStopWords(sw.words);
-    setFunnel(fn);
-    setManagers(mg);
-    setBestReplies(br);
+    if (d.status === "fulfilled") setDaily(d.value);
+    if (bl.status === "fulfilled") setBlacklist(bl.value);
+    if (sw.status === "fulfilled") setStopWords(sw.value.words);
+    if (fn.status === "fulfilled") setFunnel(fn.value);
+    if (mg.status === "fulfilled") setManagers(mg.value);
+    if (br.status === "fulfilled") setBestReplies(br.value);
     setLoading(false);
   };
 
