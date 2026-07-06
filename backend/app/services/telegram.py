@@ -281,11 +281,13 @@ def approval_card(
     time_line = f"🕐 <b>Написал:</b> {escape(last_message_time)}\n" if last_message_time else ""
     claim_line = f"⏳ <b>Редактирует:</b> {escape(claimed_by_name)}\n" if claimed_by_name else ""
     stop_word = (approval.extracted_fields or {}).get("_stop_word", "")
-    header = (
-        f"⛔ <b>СТОП-СЛОВО: {escape(stop_word)} · №{approval.id:07d}</b>\n"
-        if stop_word else
-        f"🟣 <b>Новый AI-ответ №{approval.id:07d}</b>\n"
-    )
+    is_purchase = bool((approval.extracted_fields or {}).get("_purchase_intent"))
+    if stop_word:
+        header = f"⛔ <b>СТОП-СЛОВО: {escape(stop_word)} · №{approval.id:07d}</b>\n"
+    elif is_purchase:
+        header = f"🛒 <b>ХОЧЕТ КУПИТЬ · №{approval.id:07d}</b>\n"
+    else:
+        header = f"🟣 <b>Новый AI-ответ №{approval.id:07d}</b>\n"
     repeat_line = f"🔄 <b>Повторный клиент · {repeat_count} обращений</b>\n" if repeat_count > 1 else ""
     text = (
         header
