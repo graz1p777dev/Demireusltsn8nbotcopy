@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import desc, func, select, text
+from sqlalchemy import desc, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings as app_settings
@@ -70,8 +70,29 @@ class ManualMessage(BaseModel):
 
 
 @router.get("/conversations")
-def conversations(db: Session = Depends(get_db)) -> list[dict]:
-    rows = db.scalars(select(Lead).order_by(desc(Lead.updated_at))).all()
+def conversations(
+    db: Session = Depends(get_db),
+    limit: int | None = None,
+    offset: int = 0,
+    q: str | None = None,
+) -> list[dict]:
+    # Backward compatible: without limit/q returns all leads (old CRM relies on this).
+    # With limit → paginated for lazy scroll; with q → search across the whole DB.
+    stmt = select(Lead).order_by(desc(Lead.updated_at))
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        stmt = stmt.outerjoin(Client, Lead.client_id == Client.id).where(
+            or_(
+                Client.name.ilike(term),
+                Client.phone.ilike(term),
+                Lead.amocrm_lead_id.ilike(term),
+            )
+        )
+    if offset:
+        stmt = stmt.offset(offset)
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    rows = db.scalars(stmt).all()
     return [
         {
             "id": row.id,
