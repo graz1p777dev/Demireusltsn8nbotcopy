@@ -7,7 +7,7 @@ import { Bot, User, ExternalLink, ArrowLeft, Headset } from "lucide-react";
 import Link from "next/link";
 
 type ChatMessage = {
-  id: number;
+  id: number | string;
   role: string;
   text: string;
   status: string;
@@ -28,6 +28,17 @@ function fmt(iso: string | null) {
     day: "2-digit", month: "2-digit", year: "numeric",
     hour: "2-digit", minute: "2-digit",
   });
+}
+
+function messageStatusTag(message: ChatMessage): { label: string; color: string } | null {
+  if (message.role !== "assistant") return null;
+  if (message.status === "pending_review") {
+    return { label: "#непринятое", color: "#f59e0b" };
+  }
+  if (message.status === "approved" || message.status === "sent") {
+    return { label: "#принято", color: "#22c55e" };
+  }
+  return null;
 }
 
 export default function ChatPage() {
@@ -117,6 +128,7 @@ export default function ChatPage() {
         {data.messages.map(m => {
           const isClient = m.role === "user";
           const isManager = m.role === "manager";
+          const statusTag = messageStatusTag(m);
           // client → right; bot & consultant → left
           const label = isClient
             ? <><User size={10} /> Клиент</>
@@ -145,12 +157,12 @@ export default function ChatPage() {
               }}>
                 {m.text}
               </div>
-              {m.role === "assistant" && (
+              {statusTag && (
                 <div style={{
                   fontSize: 10, fontWeight: 600,
-                  color: m.status === "pending_review" ? "#f59e0b" : "#22c55e",
+                  color: statusTag.color,
                 }}>
-                  {m.status === "pending_review" ? "#непринятое" : "#принято"}
+                  {statusTag.label}
                 </div>
               )}
             </div>

@@ -20,6 +20,9 @@ _log = logging.getLogger(__name__)
 
 _PICTURE_RE = re.compile(r'\[picture\]\s*(https?://\S+)')
 
+# Marker the manager fills in on a 'wants to buy' card. Kept in sync with telegram.py / webhooks.py.
+PURCHASE_PLACEHOLDER = "{ответ пользователя}"
+
 
 class AIResult(BaseModel):
     content: str | dict
@@ -215,6 +218,66 @@ def generate_reply(
         input_cost_per_1m=_in_cost,
         output_cost_per_1m=_out_cost,
     )
+
+
+REPLY_CHECK_SYSTEM_PROMPT = """Ты — контролёр качества ответов Айым, помощника косметолога Demi Results.
+Тебе дают историю диалога и черновик ответа. Проверь ответ по чек-листу:
+
+1. Понятно ли из ответа, что ассистент понял, что хочет клиент?
+2. Не повторяет ли ответ информацию/вопросы, которые уже были в диалоге?
+3. Нет ли лишних вопросов (максимум 1-2 вопроса, только нужные)?
+4. Не предлагается ли консультация слишком рано (до понимания проблемы) или повторно после отказа?
+5. Звучит ли ответ как сообщение живого человека (тепло, коротко, без шаблонности)?
+6. Ответ короче 4 предложений?
+
+Верни строго JSON:
+{"ok": true, "fixed_reply": null}
+— если ответ проходит все пункты.
+{"ok": false, "fixed_reply": "исправленный текст"}
+— если есть проблемы: перепиши ответ так, чтобы он прошёл все пункты. Сохраняй язык, тон «на Вы», эмодзи умеренно. Не добавляй новых фактов, цен и слотов.
+"""
+
+
+def verify_reply(dialogue: list[dict], reply: str) -> tuple[str, AIResult | None]:
+    """Self-check pass: validate the draft reply against the quality checklist.
+
+    Returns (final_reply, usage). On any failure returns the original reply.
+    """
+    if not settings.openai_api_key or not reply.strip():
+        return reply, None
+    try:
+        started = perf_counter()
+        # Last few turns are enough context for the checklist
+        recent = _clean_dialogue(dialogue[-10:])
+        payload = json.dumps({"dialogue": recent, "draft_reply": reply}, ensure_ascii=False)
+        response = _client().chat.completions.create(
+            model=settings.openai_extractor_model,
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": REPLY_CHECK_SYSTEM_PROMPT},
+                {"role": "user", "content": payload},
+            ],
+        )
+        latency_ms = int((perf_counter() - started) * 1000)
+        data = json.loads(response.choices[0].message.content or "{}")
+        usage = _result(
+            content="",
+            model=settings.openai_extractor_model,
+            purpose="reply_check",
+            usage=_usage_payload(response),
+            latency_ms=latency_ms,
+            input_cost_per_1m=settings.openai_input_cost_extractor,
+            output_cost_per_1m=settings.openai_output_cost_extractor,
+        )
+        fixed = (data.get("fixed_reply") or "").strip()
+        if not data.get("ok") and fixed:
+            _log.info("reply_check rewrote reply: %.80s -> %.80s", reply, fixed)
+            return fixed, usage
+        return reply, usage
+    except Exception as exc:
+        _log.warning("verify_reply failed: %s", exc)
+        return reply, None
 
 
 def summarize_dialogue(dialogue: list[dict]) -> tuple[str, AIResult | None]:
@@ -658,6 +721,57 @@ def analyze_manager_corrections(examples: list[dict]) -> AIResult:
         input_cost_per_1m=settings.openai_input_cost_sales,
         output_cost_per_1m=settings.openai_output_cost_sales,
     )
+
+
+def generate_purchase_template(dialogue: list[dict], client_message: str) -> tuple[str, AIResult | None]:
+    """Draft a short reply lead-in for a 'wants to buy' card.
+
+    The manager only fills in the concrete detail (price, availability, link),
+    so the phrase must END with PURCHASE_PLACEHOLDER. Returns (template, usage);
+    falls back to a bare placeholder on any failure.
+    """
+    if not settings.openai_api_key or not client_message.strip():
+        return PURCHASE_PLACEHOLDER, None
+    try:
+        started = perf_counter()
+        system = (
+            "Ты — Айым, помощник косметолога Demi Results. Клиент хочет купить конкретный товар "
+            "или спрашивает его цену/наличие. Точную информацию (цену, наличие, ссылку) впишет менеджер. "
+            "Составь КОРОТКОЕ начало ответа клиенту: 1 предложение, тёплый тон, обращение на «Вы», "
+            "на языке клиента, без приветствий. "
+            f"Фраза должна ЗАКАНЧИВАТЬСЯ ровно на маркер {PURCHASE_PLACEHOLDER}. "
+            f"Пример: «Цена нашей услуги очистки — {PURCHASE_PLACEHOLDER}». "
+            f"Верни ТОЛЬКО текст с маркером {PURCHASE_PLACEHOLDER}, без кавычек и пояснений."
+        )
+        recent = _clean_dialogue(dialogue[-6:])
+        user = json.dumps({"dialogue": recent, "latest_message": client_message}, ensure_ascii=False)
+        response = _client().chat.completions.create(
+            model=settings.openai_extractor_model,
+            temperature=0.3,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        latency_ms = int((perf_counter() - started) * 1000)
+        template = (response.choices[0].message.content or "").strip().strip('"').strip()
+        if not template:
+            template = PURCHASE_PLACEHOLDER
+        elif PURCHASE_PLACEHOLDER not in template:
+            template = f"{template} {PURCHASE_PLACEHOLDER}"
+        usage = _result(
+            content="",
+            model=settings.openai_extractor_model,
+            purpose="purchase_template",
+            usage=_usage_payload(response),
+            latency_ms=latency_ms,
+            input_cost_per_1m=settings.openai_input_cost_extractor,
+            output_cost_per_1m=settings.openai_output_cost_extractor,
+        )
+        return template, usage
+    except Exception as exc:
+        _log.warning("generate_purchase_template failed: %s", exc)
+        return PURCHASE_PLACEHOLDER, None
 
 
 def transcribe_voice(url: str) -> tuple[str, str]:
