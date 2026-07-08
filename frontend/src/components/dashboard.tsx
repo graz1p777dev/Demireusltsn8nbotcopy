@@ -772,7 +772,7 @@ export function LogoutButton() {
       style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", justifyContent: "flex-start", padding: "6px 0" }}
       title="Выйти">
       <LogOut size={13} />
-      <span style={{ fontSize: 11 }}>Выйти</span>
+      <span className="nav-label" style={{ fontSize: 11 }}>Выйти</span>
     </button>
   );
 }
