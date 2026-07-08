@@ -10,7 +10,11 @@ from pydantic import BaseModel
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
-from app.services.prompts import EXTRACTOR_SYSTEM_PROMPT, SALES_AGENT_SYSTEM_PROMPT, SALES_INTENT_SYSTEM_PROMPT
+from app.services.prompts import (
+    EXTRACTOR_SYSTEM_PROMPT,
+    SALES_AGENT_SYSTEM_PROMPT,
+    SALES_INTENT_SYSTEM_PROMPT,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -314,6 +318,63 @@ def _deepseek_client() -> OpenAI:
     return OpenAI(api_key=settings.deepseek_api_key, base_url="https://api.deepseek.com/v1")
 
 
+def call_gemini(model: str, messages: list[dict], temperature: float = 0.5) -> tuple[str, dict]:
+    """Call Google's Generative Language API directly over REST (no extra SDK dependency).
+
+    `messages` uses the same OpenAI-style shape the Laboratory tester already builds
+    (role: system/user/assistant, content: str or list of content parts). Returns
+    (reply_text, usage) where usage has prompt_tokens/completion_tokens/total_tokens.
+    """
+    if not settings.gemini_api_key:
+        return "Здравствуйте 👋 (Gemini API key не настроен)", {}
+
+    system_text = ""
+    contents: list[dict] = []
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+        if role == "system":
+            system_text = content if isinstance(content, str) else str(content)
+            continue
+        parts: list[dict] = []
+        if isinstance(content, str):
+            parts.append({"text": content})
+        elif isinstance(content, list):
+            for block in content:
+                if block.get("type") == "text":
+                    parts.append({"text": block.get("text", "")})
+                elif block.get("type") == "image_url":
+                    url = block.get("image_url", {}).get("url", "")
+                    if url.startswith("data:"):
+                        header, _, b64data = url.partition(",")
+                        mime = header.split(";")[0].replace("data:", "") or "image/jpeg"
+                        parts.append({"inline_data": {"mime_type": mime, "data": b64data}})
+        contents.append({"role": "model" if role == "assistant" else "user", "parts": parts})
+
+    body: dict = {"contents": contents, "generationConfig": {"temperature": temperature}}
+    if system_text:
+        body["systemInstruction"] = {"parts": [{"text": system_text}]}
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    with httpx.Client(timeout=60) as client:
+        resp = client.post(url, params={"key": settings.gemini_api_key}, json=body)
+        resp.raise_for_status()
+        data = resp.json()
+
+    text = ""
+    candidates = data.get("candidates") or []
+    if candidates:
+        for part in candidates[0].get("content", {}).get("parts", []):
+            text += part.get("text", "")
+    usage_meta = data.get("usageMetadata", {})
+    usage = {
+        "prompt_tokens": usage_meta.get("promptTokenCount", 0),
+        "completion_tokens": usage_meta.get("candidatesTokenCount", 0),
+        "total_tokens": usage_meta.get("totalTokenCount", 0),
+    }
+    return text.strip(), usage
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def classify_sales_intent(dialogue: list[dict], latest_message: str) -> AIResult:
     fallback = {"is_sales": True, "is_complex": True, "reason": "no_key"}
@@ -446,6 +507,82 @@ def ai_edit_reply(original_reply: str, client_message: str, edit_prompt: str) ->
     )
 
 
+_LANGUAGE_ALIASES = {
+    "ru": "русский",
+    "rus": "русский",
+    "russian": "русский",
+    "рус": "русский",
+    "русский": "русский",
+    "ru-ru": "русский",
+    "ky": "кыргызский",
+    "kg": "кыргызский",
+    "kyrgyz": "кыргызский",
+    "kyrgyzstan": "кыргызский",
+    "кыргыз": "кыргызский",
+    "кыргызский": "кыргызский",
+    "киргизский": "кыргызский",
+    "киргиз": "кыргызский",
+    "en": "английский",
+    "eng": "английский",
+    "english": "английский",
+    "англ": "английский",
+    "английский": "английский",
+    "kz": "казахский",
+    "kk": "казахский",
+    "kazakh": "казахский",
+    "казахский": "казахский",
+    "uz": "узбекский",
+    "uzbek": "узбекский",
+    "узбекский": "узбекский",
+    "tr": "турецкий",
+    "turkish": "турецкий",
+    "турецкий": "турецкий",
+}
+
+
+def normalize_target_language(language: str) -> str:
+    cleaned = re.sub(r"\s+", " ", (language or "").strip().lower())
+    cleaned = cleaned.strip(" .,!?:;\"'")
+    return _LANGUAGE_ALIASES.get(cleaned, cleaned or "русский")
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+def translate_reply(original_reply: str, client_message: str, target_language: str) -> AIResult:
+    language = normalize_target_language(target_language)
+    if not settings.openai_api_key:
+        return AIResult(content=original_reply, model=settings.openai_model, purpose="translate_reply")
+    started = perf_counter()
+    system = (
+        "Ты профессионально переводишь сообщения менеджера магазина косметики. "
+        "Переведи ответ на целевой язык. Сохрани смысл, дружелюбный тон, обращения, числа, цены, "
+        "названия брендов, ссылки, телефоны и переносы строк. Не добавляй новые обещания и факты. "
+        "Верни ТОЛЬКО переведенный текст, без комментариев, кавычек и пояснений."
+    )
+    user = (
+        f"Целевой язык: {language}\n\n"
+        f"Сообщение клиента для контекста:\n{client_message or '-'}\n\n"
+        f"Ответ для перевода:\n{original_reply}"
+    )
+    response = _client().chat.completions.create(
+        model=settings.openai_model_sales,
+        temperature=0.1,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    )
+    latency_ms = int((perf_counter() - started) * 1000)
+    return _result(
+        content=(response.choices[0].message.content or "").strip(),
+        model=settings.openai_model_sales,
+        purpose="translate_reply",
+        usage=_usage_payload(response),
+        latency_ms=latency_ms,
+        input_cost_per_1m=settings.openai_input_cost_sales,
+        output_cost_per_1m=settings.openai_output_cost_sales,
+    )
+
+
 def explain_reply(client_message: str, reply: str, conversation_summary: str | None = None) -> AIResult:
     """Explain briefly why the bot answered the way it did (for managers)."""
     if not settings.openai_api_key:
@@ -477,6 +614,49 @@ def explain_reply(client_message: str, reply: str, conversation_summary: str | N
         latency_ms=latency_ms,
         input_cost_per_1m=settings.openai_input_cost_extractor,
         output_cost_per_1m=settings.openai_output_cost_extractor,
+    )
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+def analyze_manager_corrections(examples: list[dict]) -> AIResult:
+    """Group manager edits of bot drafts into common mistake patterns for the Laboratory analysis tool."""
+    if not settings.openai_api_key:
+        return AIResult(content={"categories": [], "suggested_prompt_changes": "", "expected_improvement": ""},
+                         model=settings.openai_model_sales, purpose="mistake_analysis")
+    started = perf_counter()
+    system = (
+        "Ты — аналитик качества AI-бота продаж. Тебе дают примеры диалогов, где менеджер исправил черновик "
+        "бота перед отправкой клиенту: сообщение клиента (client_message), черновик бота (ai_reply) и то, что "
+        "менеджер отправил в итоге (final_reply). Сравни ai_reply и final_reply в каждом примере, пойми ЧТО "
+        "именно менеджер поменял и почему, и сгруппируй повторяющиеся типы ошибок бота в 3-6 категорий. "
+        "Ответь строго JSON вида: "
+        '{"categories": [{"label": "краткое название ошибки на русском", "count": число_примеров}], '
+        '"suggested_prompt_changes": "конкретные формулировки для добавления в системный промпт бота", '
+        '"expected_improvement": "честная экспертная оценка ожидаемого эффекта в свободной форме, '
+        'явно как оценка, а не измеренная метрика"}'
+    )
+    response = _client().chat.completions.create(
+        model=settings.openai_model_sales,
+        temperature=0.2,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": json.dumps({"examples": examples}, ensure_ascii=False)},
+        ],
+    )
+    latency_ms = int((perf_counter() - started) * 1000)
+    data = json.loads(response.choices[0].message.content or "{}")
+    data.setdefault("categories", [])
+    data.setdefault("suggested_prompt_changes", "")
+    data.setdefault("expected_improvement", "")
+    return _result(
+        content=data,
+        model=settings.openai_model_sales,
+        purpose="mistake_analysis",
+        usage=_usage_payload(response),
+        latency_ms=latency_ms,
+        input_cost_per_1m=settings.openai_input_cost_sales,
+        output_cost_per_1m=settings.openai_output_cost_sales,
     )
 
 

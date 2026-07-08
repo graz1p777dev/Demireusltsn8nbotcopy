@@ -132,13 +132,13 @@ def _load_extra_manager_ids(db) -> list[str]:
         return []
 
 
-def _has_card_data(extracted: dict) -> bool:
-    if extracted.get("skin_problem"):
-        return True
-    return any(
-        extracted.get(key)
-        for key in ("consultation_format", "city", "experience", "name", "contacts")
-    )
+# Lead is qualified when the bot knows enough for the amoCRM card:
+# the skin problem plus where the client is and the consultation format.
+QUALIFICATION_FIELDS = ("skin_problem", "city", "consultation_format")
+
+
+def _is_qualified(extracted: dict) -> bool:
+    return all(extracted.get(key) for key in QUALIFICATION_FIELDS)
 
 
 def apply_sales_stage_from_extracted(db, lead: Lead, extracted: dict) -> None:
@@ -150,8 +150,8 @@ def apply_sales_stage_from_extracted(db, lead: Lead, extracted: dict) -> None:
             "consultation_confirmed",
         )
         return
-    if _has_card_data(extracted):
-        move_lead_status(db, lead, settings.amocrm_status_qualified, "lead_card_filled")
+    if _is_qualified(extracted):
+        move_lead_status(db, lead, settings.amocrm_status_qualified, "lead_qualified")
 
 
 def _get_client_phone(lead: Lead) -> str | None:

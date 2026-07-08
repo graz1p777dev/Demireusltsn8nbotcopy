@@ -361,19 +361,50 @@ class AiTestRequest(BaseModel):
     images: list[str] = []             # data URLs of uploaded images
 
 
-# Rough $ per 1M tokens (input, output) for the tester cost estimate
+# $ per 1M tokens (input, output) for the tester cost estimate and the Laboratory model picker.
+# Exact catalog — do not add extra models without updating pricing from the provider first.
 _TEST_COST_MAP = {
-    "gpt-4.1-mini": (0.40, 1.60), "gpt-4.1": (2.0, 8.0),
-    "gpt-4o": (2.50, 10.0), "gpt-4o-mini": (0.15, 0.60),
-    "gpt-5.1": (1.25, 10.0), "gpt-5.5": (5.0, 30.0),
-    "o4-mini": (1.10, 4.40),
+    # OpenAI
+    "gpt-5.5": (5.00, 30.00),
+    "gpt-5.5-pro": (30.00, 180.00),
+    "gpt-5.4": (2.50, 15.00),
+    "gpt-5.4-mini": (0.75, 4.50),
+    "gpt-5.4-nano": (0.20, 1.25),
+    # Google Gemini — gemini-2.5-pro price shown is the <=200k-context tier;
+    # above 200k context it's $2.50/$15.00 (same model id, tiered by Google).
+    "gemini-2.5-pro": (1.25, 10.00),
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.5-flash-lite": (0.10, 0.40),
+    # DeepSeek — cache-miss input price
+    "deepseek-v3.2": (0.14, 0.28),
+    "deepseek-v4-pro": (0.435, 0.87),
+    "deepseek-reasoner": (0.55, 2.19),  # DeepSeek R1
 }
+
+_GEMINI_MODELS = {"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"}
+# Catalog display name -> actual DeepSeek API model id. "deepseek-chat" is the id already
+# verified working in this project (classify_sales_intent's hypervisor call); V4 Pro has no
+# confirmed separate id yet, so it's routed to the same chat model until DeepSeek exposes one.
+_DEEPSEEK_API_MODEL = {
+    "deepseek-v3.2": "deepseek-chat",
+    "deepseek-v4-pro": "deepseek-chat",
+    "deepseek-reasoner": "deepseek-reasoner",
+}
+
+
+@router.get("/model-pricing")
+def model_pricing() -> list[dict]:
+    """Model catalog with $/1M token pricing for the Laboratory model picker."""
+    return [
+        {"model": model, "input_cost_per_1m": in_c, "output_cost_per_1m": out_c}
+        for model, (in_c, out_c) in sorted(_TEST_COST_MAP.items())
+    ]
 
 
 @router.post("/ai-test")
 def ai_test(body: AiTestRequest, db: Session = Depends(get_db)) -> dict:
     from time import perf_counter
-    from app.services.openai_service import _client
+    from app.services.openai_service import _client, _deepseek_client
     from app.services.prompts import SALES_AGENT_SYSTEM_PROMPT
 
     # Test prompt override; otherwise the prod prompt from DB
@@ -417,20 +448,30 @@ def ai_test(body: AiTestRequest, db: Session = Depends(get_db)) -> dict:
 
     try:
         started = perf_counter()
-        kwargs: dict = {"model": model, "temperature": body.temperature, "messages": messages}
-        if body.max_tokens:
-            kwargs["max_tokens"] = body.max_tokens
-        response = _client().chat.completions.create(**kwargs)
+        if model in _GEMINI_MODELS:
+            from app.services.openai_service import call_gemini
+            reply_text, usage_dict = call_gemini(model, messages, body.temperature)
+            p_tok = usage_dict.get("prompt_tokens", 0)
+            c_tok = usage_dict.get("completion_tokens", 0)
+        else:
+            is_deepseek = model in _DEEPSEEK_API_MODEL
+            client = _deepseek_client() if is_deepseek else _client()
+            api_model = _DEEPSEEK_API_MODEL[model] if is_deepseek else model
+            kwargs: dict = {"model": api_model, "temperature": body.temperature, "messages": messages}
+            if body.max_tokens:
+                kwargs["max_tokens"] = body.max_tokens
+            response = client.chat.completions.create(**kwargs)
+            usage = response.usage
+            p_tok = usage.prompt_tokens if usage else 0
+            c_tok = usage.completion_tokens if usage else 0
+            reply_text = (response.choices[0].message.content or "").strip()
         latency_ms = int((perf_counter() - started) * 1000)
-        usage = response.usage
-        p_tok = usage.prompt_tokens if usage else 0
-        c_tok = usage.completion_tokens if usage else 0
         in_c, out_c = _TEST_COST_MAP.get(model, (1.0, 4.0))
         cost = p_tok / 1_000_000 * in_c + c_tok / 1_000_000 * out_c
         return {
             "ok": True,
-            "reply": (response.choices[0].message.content or "").strip(),
-            "tokens": (usage.total_tokens if usage else 0),
+            "reply": reply_text,
+            "tokens": p_tok + c_tok,
             "cost": round(cost, 6),
             "latency_ms": latency_ms,
             "model": model,
@@ -453,6 +494,57 @@ async def ai_test_transcribe(file: UploadFile = File(...)) -> dict:
         return {"ok": True, "text": (tr.text or "").strip()}
     except Exception as e:
         return {"ok": False, "text": "", "error": str(e)}
+
+
+class LabEditReplyRequest(BaseModel):
+    original_reply: str
+    client_message: str
+    edit_prompt: str
+
+
+@router.post("/lab/edit-reply")
+def lab_edit_reply(body: LabEditReplyRequest) -> dict:
+    """Rewrite a single Laboratory test reply per a one-off instruction — does not touch the bot's prompt."""
+    from app.services.openai_service import ai_edit_reply
+    result = ai_edit_reply(body.original_reply, body.client_message, body.edit_prompt)
+    return {
+        "reply": result.content,
+        "tokens": result.total_tokens,
+        "cost": round(result.total_cost, 6),
+    }
+
+
+@router.get("/lab/mistake-analysis")
+def lab_mistake_analysis(limit: int = 100, db: Session = Depends(get_db)) -> dict:
+    """Analyze the last N reviewed dialogues for recurring manager corrections (Laboratory tool)."""
+    from app.services.openai_service import analyze_manager_corrections
+
+    rows = db.scalars(
+        select(TrainingExample).order_by(desc(TrainingExample.id)).limit(limit)
+    ).all()
+    edited = [r for r in rows if r.was_edited]
+    if not edited:
+        return {
+            "total_dialogues": len(rows), "edited_count": 0,
+            "categories": [], "suggested_prompt_changes": "", "expected_improvement": "",
+        }
+    examples = [
+        {
+            "client_message": r.client_message[:500],
+            "ai_reply": r.ai_reply[:500],
+            "final_reply": r.final_reply[:500],
+        }
+        for r in edited
+    ]
+    result = analyze_manager_corrections(examples)
+    data = result.content if isinstance(result.content, dict) else {}
+    return {
+        "total_dialogues": len(rows),
+        "edited_count": len(edited),
+        "categories": data.get("categories", []),
+        "suggested_prompt_changes": data.get("suggested_prompt_changes", ""),
+        "expected_improvement": data.get("expected_improvement", ""),
+    }
 
 
 @router.get("/analytics")

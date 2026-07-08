@@ -1,15 +1,14 @@
+import json as _json
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-_log = logging.getLogger(__name__)
-
 from app.core.config import settings
 from app.db.session import get_db
-import json as _json
-
 from app.models.entities import ApprovalRequest, ConsultationReminder, Lead, Setting
 from app.schemas.amocrm import parse_amocrm_webhook
 from app.services import amocrm, telegram
@@ -20,7 +19,6 @@ from app.tasks.pipeline import (
     apply_edited_reply,
     approve_request,
     clear_claim,
-    get_claim,
     pop_ai_edit_session,
     pop_edit_prompt_msg,
     pop_edit_session,
@@ -36,6 +34,8 @@ from app.tasks.pipeline import (
     set_note_session,
     set_translate_session,
 )
+
+_log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -440,8 +440,7 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             return {"ok": True, "action": "ignored_non_text"}
         if text in {"/consult", "/consultations"}:
             from app.services.google_sheets import get_all_consultations_for_date
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
+
             today = datetime.now(ZoneInfo(settings.timezone)).strftime("%d.%m.%Y")
             consultations = get_all_consultations_for_date(today)
             if not consultations:
@@ -504,25 +503,26 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
                 telegram.delete_message(manager_id, prompt_mid)
             approval = db.get(ApprovalRequest, translate_approval_id)
             if approval:
-                from app.services.openai_service import ai_edit_reply
+                from app.services.openai_service import translate_reply
                 from app.tasks.pipeline import save_ai_usage
                 reply_text = approval.edited_reply or approval.ai_reply or ""
                 try:
-                    result = ai_edit_reply(
+                    result = translate_reply(
                         reply_text,
                         approval.client_message or "",
-                        f"Переведи этот ответ на {text.strip()} язык. Сохраняй смысл и тон. Верни только переведённый текст.",
+                        text,
                     )
                     save_ai_usage(db, approval.lead_id, result)
-                    approval.edited_reply = result.content
+                    approval.edited_reply = str(result.content)
                     db.commit()
                     db.refresh(approval)
                     lead = db.get(Lead, approval.lead_id)
                     if lead:
                         has_templates = bool(_load_templates(db))
                         telegram.edit_approval_card(approval, lead, has_templates=has_templates)
-                except Exception:
-                    telegram.send_text(callback_chat_id, "Ошибка перевода.")
+                except Exception as exc:
+                    _log.error("translate_reply failed approval_id=%s: %s", translate_approval_id, exc)
+                    telegram.send_text(message_chat_id or manager_id, "Ошибка перевода.")
             return {"ok": True, "action": "translated"}
 
         # Заметка
