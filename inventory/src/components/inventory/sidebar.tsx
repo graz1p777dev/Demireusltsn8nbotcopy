@@ -17,7 +17,7 @@ function isActive(pathname: string, href: string): boolean {
 
 const FOOTER_LINKS = [
   { href: "#", label: "Что нового", icon: Sparkles },
-  { href: "#", label: "База знаний", icon: BookOpen },
+  { href: "/inventory/help", label: "База знаний", icon: BookOpen },
   { href: "#", label: "Предложения", icon: MessageSquareText },
 ]
 

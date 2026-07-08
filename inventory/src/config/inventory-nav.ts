@@ -9,10 +9,9 @@ import {
   Users,
   Building2,
   Store,
-  Plug,
-  FlaskConical,
   CreditCard,
   Trash2,
+  HelpCircle,
 } from "lucide-react"
 
 export interface InventoryNavItem {
@@ -58,10 +57,9 @@ export const INVENTORY_NAV_ITEMS: InventoryNavItem[] = [
     ],
   },
   { href: "/inventory/storefront", label: "Интернет-витрина", icon: Store },
-  { href: "/inventory/integrations", label: "Интеграции", icon: Plug },
-  { href: "/inventory/lab", label: "Лаборатория", icon: FlaskConical },
   { href: "/inventory/billing", label: "Тарифы и оплата", icon: CreditCard },
   { href: "/inventory/trash", label: "Корзина", icon: Trash2 },
+  { href: "/inventory/help", label: "Помощь", icon: HelpCircle },
 ]
 
 export function getInventoryPageTitle(pathname: string): string {
