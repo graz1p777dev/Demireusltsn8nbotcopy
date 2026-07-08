@@ -42,21 +42,42 @@ def get_chat_history(amocrm_lead_id: str, db: Session = Depends(get_db)) -> dict
     messages = db.scalars(
         select(Message).where(Message.lead_id == lead.id).order_by(Message.created_at)
     ).all()
+    pending_approvals = db.scalars(
+        select(ApprovalRequest).where(
+            ApprovalRequest.lead_id == lead.id,
+            ApprovalRequest.status == "pending",
+        )
+    ).all()
     client = lead.client
+    rows = [
+        {
+            "id": m.id,
+            "role": m.role,
+            "text": m.text,
+            "status": m.status,
+            "created_at": m.created_at,
+        }
+        for m in messages
+    ] + [
+        {
+            "id": f"appr-{a.id}",
+            "role": "assistant",
+            "text": a.ai_reply,
+            "status": "pending_review",
+            "created_at": a.created_at,
+        }
+        for a in pending_approvals
+        if a.ai_reply and a.ai_reply.strip()
+    ]
+    rows.sort(key=lambda r: r["created_at"] or datetime.min.replace(tzinfo=ZoneInfo("UTC")))
     return {
         "lead_id": lead.amocrm_lead_id,
         "client_name": client.name if client else None,
         "client_phone": client.phone if client else None,
         "amocrm_url": f"{app_settings.amocrm_base_url.rstrip('/')}/leads/detail/{lead.amocrm_lead_id}",
         "messages": [
-            {
-                "id": m.id,
-                "role": m.role,
-                "text": m.text,
-                "status": m.status,
-                "created_at": m.created_at.isoformat() if m.created_at else None,
-            }
-            for m in messages
+            {**r, "created_at": r["created_at"].isoformat() if r["created_at"] else None}
+            for r in rows
         ],
     }
 
