@@ -1,7 +1,9 @@
 import { jwtVerify } from "jose";
 import { NextRequest, NextResponse } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/api/backend/auth/login"];
+// /inventory is a separate Multi-Zone app with its own Supabase auth, so the
+// CRM's JWT gate must let it (and its assets) pass through to the rewrite.
+const PUBLIC_PATHS = ["/login", "/api/backend/auth/login", "/inventory", "/inventory-static"];
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

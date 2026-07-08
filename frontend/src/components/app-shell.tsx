@@ -2,9 +2,40 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { BarChart2, MessageSquare, Settings, CalendarCheck, Sun, Moon, FileBarChart2, Menu } from "lucide-react";
+import { useEffect, useState, type CSSProperties } from "react";
+import { BarChart2, MessageSquare, Settings, CalendarCheck, Sun, Moon, FileBarChart2, Menu, Boxes, FlaskConical, HelpCircle, type LucideIcon } from "lucide-react";
 import { LiveClockWidget, LogoutButton } from "@/components/dashboard";
+
+type NavItem = { href: string; label: string; icon: LucideIcon; color: string; external?: boolean };
+
+const NAV_SECTIONS: { main: NavItem[]; admin: NavItem[] } = {
+  main: [
+    { href: "/", label: "Диалоги", icon: MessageSquare, color: "#6366F1" },
+  ],
+  admin: [
+    { href: "/analytics", label: "Аналитика", icon: BarChart2, color: "#14B8A6" },
+    { href: "/reports", label: "Отчёты", icon: FileBarChart2, color: "#0EA5E9" },
+    { href: "/consultations", label: "Консультации", icon: CalendarCheck, color: "#F59E0B" },
+    { href: "/laboratory", label: "Лаборатория", icon: FlaskConical, color: "#EC4899" },
+    // Cross-zone link to the separate inventory app — must be a plain <a>, not <Link>.
+    { href: "/inventory", label: "Товароучёт", icon: Boxes, color: "#8B5CF6", external: true },
+    { href: "/settings", label: "Настройки", icon: Settings, color: "#64748B" },
+    { href: "/help", label: "Справочник", icon: HelpCircle, color: "#22C55E" },
+  ],
+};
+
+function NavLink({ item, path }: { item: NavItem; path: string }) {
+  const active = !item.external && path === item.href;
+  const Tag = item.external ? "a" : Link;
+  return (
+    <Tag href={item.href} className={active ? "active" : ""} style={{ "--item-color": item.color } as CSSProperties}>
+      <span className="nav-icon">
+        <item.icon size={15} />
+      </span>
+      <span className="nav-label">{item.label}</span>
+    </Tag>
+  );
+}
 
 function ThemeToggle() {
   const [dark, setDark] = useState(false);
@@ -55,35 +86,22 @@ export function AppShell({ children, title, subtitle }: {
               alt="Demi Results"
               style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
             />
-            <span className="brand-name">Demi Results</span>
+            <span className="brand-name nav-label">Demi Results</span>
           </div>
-          <span className="brand-sub">CRM Bot v2</span>
+          <span className="brand-sub nav-label">CRM Bot v2</span>
         </div>
 
         <nav className="nav">
-          <span className="nav-section">Основное</span>
-          <Link href="/" className={path === "/" ? "active" : ""}>
-            <MessageSquare size={15} /> Диалоги
-          </Link>
-          <span className="nav-section">Администрирование</span>
-          <Link href="/analytics" className={path === "/analytics" ? "active" : ""}>
-            <BarChart2 size={15} /> Аналитика
-          </Link>
-          <Link href="/reports" className={path === "/reports" ? "active" : ""}>
-            <FileBarChart2 size={15} /> Отчёты
-          </Link>
-          <Link href="/consultations" className={path === "/consultations" ? "active" : ""}>
-            <CalendarCheck size={15} /> Консультации
-          </Link>
-          <Link href="/settings" className={path === "/settings" ? "active" : ""}>
-            <Settings size={15} /> Настройки
-          </Link>
+          <span className="nav-section nav-label">Основное</span>
+          {NAV_SECTIONS.main.map(item => <NavLink key={item.href} item={item} path={path} />)}
+          <span className="nav-section nav-label">Администрирование</span>
+          {NAV_SECTIONS.admin.map(item => <NavLink key={item.href} item={item} path={path} />)}
         </nav>
 
         <div className="sidebar-footer">
           <div className="status-dot">
             <span className="dot" />
-            <span>Railway online</span>
+            <span className="nav-label">Railway online</span>
           </div>
           <LogoutButton />
         </div>

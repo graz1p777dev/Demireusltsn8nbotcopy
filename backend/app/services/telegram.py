@@ -38,6 +38,7 @@ def _fmt_phone(raw: str) -> str:
 
 from app.core.config import settings
 from app.models.entities import ApprovalRequest, Lead
+from app.services.openai_service import PURCHASE_PLACEHOLDER
 
 _log = logging.getLogger(__name__)
 
@@ -154,11 +155,26 @@ def _mem(extracted: dict, key: str, empty: str = "не указано") -> str:
     return escape(str(val)) if val not in (None, "", []) else empty
 
 
-def client_memory_card(extracted: dict | None) -> str:
+def client_memory_card(extracted: dict | None, lead: Lead | None = None, approval_id: int | None = None) -> str:
     """Full client memory card + what's still unknown (for the 🧠 Память button)."""
     e = extracted or {}
+    # Header: whose memory this is
+    header = "🧠 Память"
+    if lead is not None:
+        raw_name = lead.client.name if lead.client else ""
+        _digits = re.sub(r"\D", "", raw_name or "")
+        _name_is_phone = bool(_digits) and len(_digits) >= 9 and _digits == re.sub(r"\s", "", raw_name or "")
+        client_name = "Без имени" if (_name_is_phone or not raw_name) else raw_name
+        raw_contact = (lead.client.phone if lead.client and lead.client.phone else None) or (raw_name if _name_is_phone else None) or lead.contact_id or "-"
+        contact = _fmt_phone(raw_contact) if re.sub(r"\D", "", str(raw_contact)) else str(raw_contact)
+        header = (
+            f"🧠 Память клиента: {escape(client_name)}\n"
+            f"📞 {escape(contact)} · Lead {escape(lead.amocrm_lead_id)}"
+        )
+        if approval_id:
+            header += f" · №{approval_id:07d}"
     card = "\n".join([
-        "🧠 Память",
+        header,
         "",
         f"👤 Имя: {_mem(e, 'name')}",
         f"🎂 Возраст: {_mem(e, 'age', 'не указан')}",
@@ -229,6 +245,51 @@ def _build_hashtags(contact: str, extracted: dict | None) -> str:
     return " ".join(tags)
 
 
+def _purchase_card(
+    approval: ApprovalRequest,
+    lead: Lead,
+    header: str,
+    claim_line: str,
+    repeat_line: str,
+    time_line: str,
+    client_name: str,
+    contact: str,
+    score: int,
+    decision: str | None,
+) -> str:
+    """Compact 🛒 ХОЧЕТ КУПИТЬ card: client info + a fill-in template, nothing else."""
+    template = (approval.extracted_fields or {}).get("_purchase_template") or PURCHASE_PLACEHOLDER
+    final = approval.edited_reply or approval.ai_reply
+    reply_line = escape(final) if final else escape(template)
+    text = (
+        header
+        + claim_line
+        + "\n"
+        f"👤 <b>Клиент:</b> {escape(client_name or 'Без имени')}\n"
+        + repeat_line
+        + f"📞 <b>Контакт:</b> {escape(str(contact))}\n"
+        f"🧾 <b>Lead ID:</b> {escape(lead.amocrm_lead_id)}\n"
+        f"📍 <b>Этап amoCRM:</b> {escape(approval.amocrm_stage_name or str(approval.amocrm_status_id or 'неизвестно'))}\n"
+        f"🔥 <b>Score:</b> {score}%\n"
+        f"💬 <a href=\"{chat_history_url(lead)}\">История чата</a>\n"
+        + time_line
+        + "\n"
+        + f'💬 <b>Сообщение клиента:</b>\n"{_fmt_client_message(approval.client_message)}"\n\n'
+        + f"🤖 <b>Ответ бота:</b>\n{reply_line}"
+    )
+    hashtags = _build_hashtags(contact, approval.extracted_fields)
+    if hashtags:
+        text += f"\n\n{hashtags}"
+    note = (approval.extracted_fields or {}).get("_note", "").strip() if approval.extracted_fields else ""
+    if note:
+        text += f"\n\n📝 <b>Заметка:</b> {escape(note)}"
+    if decision:
+        now = datetime.now(ZoneInfo(settings.timezone)).strftime("%d.%m.%Y %H:%M")
+        text += f"\n\n━━━━━━━━━━━━━━━━━━━━\n{decision} · {now}"
+        text += f"\n🔗 <a href=\"{lead_url(lead)}\">Открыть в amoCRM</a>"
+    return text
+
+
 def approval_card(
     approval: ApprovalRequest,
     lead: Lead,
@@ -266,12 +327,23 @@ def approval_card(
     time_line = f"🕐 <b>Написал:</b> {escape(last_message_time)}\n" if last_message_time else ""
     claim_line = f"⏳ <b>Редактирует:</b> {escape(claimed_by_name)}\n" if claimed_by_name else ""
     stop_word = (approval.extracted_fields or {}).get("_stop_word", "")
-    header = (
-        f"⛔ <b>СТОП-СЛОВО: {escape(stop_word)} · №{approval.id:07d}</b>\n"
-        if stop_word else
-        f"🟣 <b>Новый AI-ответ №{approval.id:07d}</b>\n"
-    )
+    is_purchase = bool((approval.extracted_fields or {}).get("_purchase_intent"))
+    if stop_word:
+        header = f"⛔ <b>СТОП-СЛОВО: {escape(stop_word)} · №{approval.id:07d}</b>\n"
+    elif is_purchase:
+        header = f"🛒 <b>ХОЧЕТ КУПИТЬ · №{approval.id:07d}</b>\n"
+    else:
+        header = f"🟣 <b>Новый AI-ответ №{approval.id:07d}</b>\n"
     repeat_line = f"🔄 <b>Повторный клиент · {repeat_count} обращений</b>\n" if repeat_count > 1 else ""
+
+    # Purchase-intent card: compact layout — no memory block, no AI reply,
+    # just a fill-in-the-blank template the manager completes with «Ответить».
+    if is_purchase:
+        return _purchase_card(
+            approval, lead, header, claim_line, repeat_line, time_line,
+            client_name, contact, score, decision,
+        )
+
     text = (
         header
         + claim_line
@@ -289,12 +361,7 @@ def approval_card(
         + f'💬 <b>Сообщение клиента:</b>\n"{_fmt_client_message(approval.client_message)}"\n\n'
         + translation_block
         + f"🤖 <b>Ответ бота:</b>\n{escape(reply)}\n\n"
-        f"🧠 <b>Память:</b>\n{memory_lines(approval.extracted_fields)}\n\n"
-        "⚙️ <b>Действия после принятия:</b>\n"
-        "- отправить ответ в amoCRM\n"
-        "- сохранить ответ в историю\n"
-        "- обновить поля сделки\n"
-        "- сохранить исправление менеджера для улучшения бота"
+        f"🧠 <b>Память:</b>\n{memory_lines(approval.extracted_fields)}"
     )
     hashtags = _build_hashtags(contact, approval.extracted_fields)
     if hashtags:
@@ -311,7 +378,13 @@ def approval_card(
     return text
 
 
-def approval_keyboard(approval_id: int, lead: Lead, has_templates: bool = False) -> dict:
+def approval_keyboard(approval_id: int, lead: Lead, has_templates: bool = False, is_purchase: bool = False) -> dict:
+    # Purchase-intent card gets only two actions: edit the full reply, or fill the template blank.
+    if is_purchase:
+        return {"inline_keyboard": [[
+            {"text": "✏️ Редактировать", "callback_data": f"pedit:{approval_id}"},
+            {"text": "💬 Ответить", "callback_data": f"answer:{approval_id}"},
+        ]]}
     rows = [
         [
             {"text": "✅ Принять", "callback_data": f"approve:{approval_id}"},
@@ -486,7 +559,8 @@ def send_approval_card(
     if not telegram_enabled():
         return {"skipped": True, "reason": "telegram not configured"}
     card_text = approval_card(approval, lead, messages_count=messages_count, last_message_time=last_message_time, repeat_count=repeat_count)
-    keyboard = approval_keyboard(approval.id, lead, has_templates=has_templates)
+    is_purchase = bool((approval.extracted_fields or {}).get("_purchase_intent"))
+    keyboard = approval_keyboard(approval.id, lead, has_templates=has_templates, is_purchase=is_purchase)
     message_ids: dict[str, str] = {}
     last_response: dict = {}
     with httpx.Client(timeout=20) as client:
@@ -542,7 +616,8 @@ def edit_approval_card(
     if decision:
         keyboard = {"inline_keyboard": [[{"text": "📂 Открыть лид", "url": lead_url(lead)}]]}
     else:
-        keyboard = approval_keyboard(approval.id, lead, has_templates=has_templates)
+        is_purchase = bool((approval.extracted_fields or {}).get("_purchase_intent"))
+        keyboard = approval_keyboard(approval.id, lead, has_templates=has_templates, is_purchase=is_purchase)
     card_text = approval_card(approval, lead, decision=decision, messages_count=messages_count, last_message_time=last_message_time, claimed_by_name=claimed_by_name)
     last_response: dict = {}
     any_success = False
