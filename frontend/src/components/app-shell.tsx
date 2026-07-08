@@ -3,7 +3,7 @@
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { BarChart2, MessageSquare, Settings, CalendarCheck, Sun, Moon, FileBarChart2, Menu } from "lucide-react";
+import { BarChart2, MessageSquare, Settings, CalendarCheck, Sun, Moon, FileBarChart2, Menu, Boxes } from "lucide-react";
 import { LiveClockWidget, LogoutButton } from "@/components/dashboard";
 
 function ThemeToggle() {
@@ -75,6 +75,10 @@ export function AppShell({ children, title, subtitle }: {
           <Link href="/consultations" className={path === "/consultations" ? "active" : ""}>
             <CalendarCheck size={15} /> Консультации
           </Link>
+          {/* Cross-zone link to the separate inventory app — must be a plain <a>, not <Link>. */}
+          <a href="/inventory">
+            <Boxes size={15} /> Товароучёт
+          </a>
           <Link href="/settings" className={path === "/settings" ? "active" : ""}>
             <Settings size={15} /> Настройки
           </Link>
