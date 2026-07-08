@@ -16,6 +16,9 @@ _log = logging.getLogger(__name__)
 
 _PICTURE_RE = re.compile(r'\[picture\]\s*(https?://\S+)')
 
+# Marker the manager fills in on a 'wants to buy' card. Kept in sync with telegram.py / webhooks.py.
+PURCHASE_PLACEHOLDER = "{ответ пользователя}"
+
 
 class AIResult(BaseModel):
     content: str | dict
@@ -538,6 +541,57 @@ def explain_reply(client_message: str, reply: str, conversation_summary: str | N
         input_cost_per_1m=settings.openai_input_cost_extractor,
         output_cost_per_1m=settings.openai_output_cost_extractor,
     )
+
+
+def generate_purchase_template(dialogue: list[dict], client_message: str) -> tuple[str, AIResult | None]:
+    """Draft a short reply lead-in for a 'wants to buy' card.
+
+    The manager only fills in the concrete detail (price, availability, link),
+    so the phrase must END with PURCHASE_PLACEHOLDER. Returns (template, usage);
+    falls back to a bare placeholder on any failure.
+    """
+    if not settings.openai_api_key or not client_message.strip():
+        return PURCHASE_PLACEHOLDER, None
+    try:
+        started = perf_counter()
+        system = (
+            "Ты — Айым, помощник косметолога Demi Results. Клиент хочет купить конкретный товар "
+            "или спрашивает его цену/наличие. Точную информацию (цену, наличие, ссылку) впишет менеджер. "
+            "Составь КОРОТКОЕ начало ответа клиенту: 1 предложение, тёплый тон, обращение на «Вы», "
+            "на языке клиента, без приветствий. "
+            f"Фраза должна ЗАКАНЧИВАТЬСЯ ровно на маркер {PURCHASE_PLACEHOLDER}. "
+            f"Пример: «Цена нашей услуги очистки — {PURCHASE_PLACEHOLDER}». "
+            f"Верни ТОЛЬКО текст с маркером {PURCHASE_PLACEHOLDER}, без кавычек и пояснений."
+        )
+        recent = _clean_dialogue(dialogue[-6:])
+        user = json.dumps({"dialogue": recent, "latest_message": client_message}, ensure_ascii=False)
+        response = _client().chat.completions.create(
+            model=settings.openai_extractor_model,
+            temperature=0.3,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        latency_ms = int((perf_counter() - started) * 1000)
+        template = (response.choices[0].message.content or "").strip().strip('"').strip()
+        if not template:
+            template = PURCHASE_PLACEHOLDER
+        elif PURCHASE_PLACEHOLDER not in template:
+            template = f"{template} {PURCHASE_PLACEHOLDER}"
+        usage = _result(
+            content="",
+            model=settings.openai_extractor_model,
+            purpose="purchase_template",
+            usage=_usage_payload(response),
+            latency_ms=latency_ms,
+            input_cost_per_1m=settings.openai_input_cost_extractor,
+            output_cost_per_1m=settings.openai_output_cost_extractor,
+        )
+        return template, usage
+    except Exception as exc:
+        _log.warning("generate_purchase_template failed: %s", exc)
+        return PURCHASE_PLACEHOLDER, None
 
 
 def transcribe_voice(url: str) -> tuple[str, str]:
