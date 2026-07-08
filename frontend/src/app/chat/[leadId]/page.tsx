@@ -145,6 +145,14 @@ export default function ChatPage() {
               }}>
                 {m.text}
               </div>
+              {m.role === "assistant" && (
+                <div style={{
+                  fontSize: 10, fontWeight: 600,
+                  color: m.status === "pending_review" ? "#f59e0b" : "#22c55e",
+                }}>
+                  {m.status === "pending_review" ? "#непринятое" : "#принято"}
+                </div>
+              )}
             </div>
           );
         })}
