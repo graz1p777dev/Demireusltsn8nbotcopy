@@ -25,6 +25,8 @@ from app.tasks.pipeline import (
     pop_edit_prompt_msg,
     pop_edit_session,
     pop_note_session,
+    pop_purchase_answer_session,
+    pop_purchase_edit_session,
     pop_translate_session,
     process_lead_buffer,
     reject_request,
@@ -34,6 +36,8 @@ from app.tasks.pipeline import (
     set_edit_prompt_msg,
     set_edit_session,
     set_note_session,
+    set_purchase_answer_session,
+    set_purchase_edit_session,
     set_translate_session,
 )
 
@@ -292,6 +296,49 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             if mid:
                 set_edit_prompt_msg(db, manager_id, mid)
             return {"ok": True, "action": action}
+        if action == "pedit":
+            # Purchase card «Редактировать»: manager writes the full reply, then it is sent.
+            set_purchase_edit_session(db, manager_id, approval_id)
+            telegram.answer_callback(callback_id)
+            prompt_text = f"✏️ Ответ клиенту №{approval_id:07d}\n\nНапишите полный текст ответа — он будет отправлен клиенту."
+            resp: dict = {}
+            try:
+                resp = telegram.send_text(manager_id, prompt_text)
+            except Exception:
+                pass
+            if not resp.get("result"):
+                try:
+                    resp = telegram.send_text(callback_chat_id, prompt_text)
+                except Exception:
+                    pass
+            mid = resp.get("result", {}).get("message_id")
+            if mid:
+                set_edit_prompt_msg(db, manager_id, mid)
+            return {"ok": True, "action": action}
+        if action == "answer":
+            # Purchase card «Ответить»: manager fills the {ответ пользователя} blank, then it is sent.
+            set_purchase_answer_session(db, manager_id, approval_id)
+            telegram.answer_callback(callback_id)
+            template = (approval.extracted_fields or {}).get("_purchase_template", "") if approval else ""
+            prompt_text = (
+                f"💬 Ответ клиенту №{approval_id:07d}\n\n"
+                f"Шаблон: {template}\n\n"
+                "Напишите текст, который подставится вместо «{ответ пользователя}» — ответ будет отправлен клиенту."
+            )
+            resp: dict = {}
+            try:
+                resp = telegram.send_text(manager_id, prompt_text)
+            except Exception:
+                pass
+            if not resp.get("result"):
+                try:
+                    resp = telegram.send_text(callback_chat_id, prompt_text)
+                except Exception:
+                    pass
+            mid = resp.get("result", {}).get("message_id")
+            if mid:
+                set_edit_prompt_msg(db, manager_id, mid)
+            return {"ok": True, "action": action}
         if action == "ai_edit":
             set_ai_edit_session(db, manager_id, approval_id)
             manager_name = _load_manager_name(db, manager_id)
@@ -498,6 +545,41 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
                     _log.error("edit_approval_card failed after manual edit approval_id=%s msg_id=%s result=%s", edit_approval_id, approval.telegram_message_id, result)
                     telegram.send_text(manager_id, f"⚠️ Не удалось обновить карточку №{edit_approval_id:07d}, но ответ сохранён. Нажмите «Принять» — правильный ответ будет отправлен клиенту.")
             return {"ok": True, "action": "edited"}
+
+        # Покупка — полный ответ вручную, сразу отправляем клиенту
+        purchase_edit_id = pop_purchase_edit_session(db, manager_id)
+        if purchase_edit_id and text:
+            prompt_mid = pop_edit_prompt_msg(db, manager_id)
+            if prompt_mid:
+                telegram.delete_message(manager_id, prompt_mid)
+            approval = db.get(ApprovalRequest, purchase_edit_id)
+            if approval:
+                approval.edited_reply = text.strip()
+                approval.status = "edited"
+                approval.manager_telegram_id = manager_id
+                db.commit()
+                approve_request(db, purchase_edit_id, manager_id)
+            return {"ok": True, "action": "purchase_replied"}
+
+        # Покупка — подстановка в шаблон, сразу отправляем клиенту
+        purchase_answer_id = pop_purchase_answer_session(db, manager_id)
+        if purchase_answer_id and text:
+            prompt_mid = pop_edit_prompt_msg(db, manager_id)
+            if prompt_mid:
+                telegram.delete_message(manager_id, prompt_mid)
+            approval = db.get(ApprovalRequest, purchase_answer_id)
+            if approval:
+                template = (approval.extracted_fields or {}).get("_purchase_template") or telegram.PURCHASE_PLACEHOLDER
+                if telegram.PURCHASE_PLACEHOLDER in template:
+                    final = template.replace(telegram.PURCHASE_PLACEHOLDER, text.strip())
+                else:
+                    final = f"{template} {text.strip()}".strip()
+                approval.edited_reply = final
+                approval.status = "edited"
+                approval.manager_telegram_id = manager_id
+                db.commit()
+                approve_request(db, purchase_answer_id, manager_id)
+            return {"ok": True, "action": "purchase_answered"}
 
         # Перевод ответа
         translate_approval_id = pop_translate_session(db, manager_id)

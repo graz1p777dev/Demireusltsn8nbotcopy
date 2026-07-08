@@ -25,7 +25,7 @@ from app.models.entities import (
     TrainingExample,
 )
 from app.services import amocrm, google_sheets, telegram
-from app.services.openai_service import AIResult, ai_edit_reply, classify_sales_intent, detect_and_translate, detect_language, extract_fields, generate_reply, summarize_dialogue, verify_reply
+from app.services.openai_service import AIResult, ai_edit_reply, classify_sales_intent, detect_and_translate, detect_language, extract_fields, generate_purchase_template, generate_reply, summarize_dialogue, verify_reply
 from app.services.slots import check_consultation_slots
 from app.tasks.celery_app import celery_app
 
@@ -347,13 +347,16 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
             repeat_count = _count_repeat_leads(db, lead)
             extra_managers = _load_extra_manager_ids(db)
             _templates_exist = bool(_load_templates(db))
+            purchase_template, _tpl_usage = generate_purchase_template(dialogue, combined_text)
+            if _tpl_usage:
+                save_ai_usage(db, lead.id, _tpl_usage)
             approval = ApprovalRequest(
                 lead_id=lead.id,
                 chat_id=lead.chat_id or "",
                 client_message=combined_text,
                 ai_reply="",
                 status="pending",
-                extracted_fields={"_purchase_intent": True},
+                extracted_fields={"_purchase_intent": True, "_purchase_template": purchase_template},
                 amocrm_pipeline_id=stage.get("pipeline_id"),
                 amocrm_status_id=stage.get("status_id"),
                 amocrm_stage_name=stage.get("stage_name"),
@@ -682,6 +685,24 @@ def set_note_session(db, manager_id: str, approval_id: int) -> None:
 
 def pop_note_session(db, manager_id: str) -> int | None:
     value = _pop_session(db, f"telegram_note_session:{manager_id}")
+    return int(value) if value else None
+
+
+def set_purchase_answer_session(db, manager_id: str, approval_id: int) -> None:
+    _set_session(db, f"telegram_purchase_answer_session:{manager_id}", str(approval_id))
+
+
+def pop_purchase_answer_session(db, manager_id: str) -> int | None:
+    value = _pop_session(db, f"telegram_purchase_answer_session:{manager_id}")
+    return int(value) if value else None
+
+
+def set_purchase_edit_session(db, manager_id: str, approval_id: int) -> None:
+    _set_session(db, f"telegram_purchase_edit_session:{manager_id}", str(approval_id))
+
+
+def pop_purchase_edit_session(db, manager_id: str) -> int | None:
+    value = _pop_session(db, f"telegram_purchase_edit_session:{manager_id}")
     return int(value) if value else None
 
 
