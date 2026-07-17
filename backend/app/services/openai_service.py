@@ -19,6 +19,7 @@ from app.services.prompts import (
 _log = logging.getLogger(__name__)
 
 _PICTURE_RE = re.compile(r'\[picture\]\s*(https?://\S+)')
+_VOICE_RE = re.compile(r'\[voice\]\s*(https?://\S+)\s*')
 
 # Marker the manager fills in on a 'wants to buy' card. Kept in sync with telegram.py / webhooks.py.
 PURCHASE_PLACEHOLDER = "{ответ пользователя}"
@@ -36,10 +37,30 @@ class AIResult(BaseModel):
     total_cost: float = 0
     latency_ms: int | None = None
     raw_usage: dict | None = None
+    reasoning: str | None = None
 
 
 def _client() -> OpenAI:
     return OpenAI(api_key=settings.openai_api_key)
+
+
+def _create_completion(**kwargs):
+    """chat.completions.create, устойчивый к моделям, не принимающим temperature.
+
+    gpt-5.x отвечает 400 «temperature does not support 0.5, only the default (1)».
+    Из-за этого бот молча переставал отвечать сложным клиентам: sales-модель по
+    умолчанию именно такая. Держать список «кто что поддерживает» бессмысленно —
+    он устареет к следующему релизу OpenAI. Поэтому ловим конкретный отказ один
+    раз и повторяем запрос без параметра.
+    """
+    try:
+        return _client().chat.completions.create(**kwargs)
+    except BadRequestError as exc:
+        if "temperature" not in kwargs or "temperature" not in str(exc):
+            raise
+        _log.warning("model %s rejects temperature, retrying with the default", kwargs.get("model"))
+        kwargs.pop("temperature")
+        return _client().chat.completions.create(**kwargs)
 
 
 def _usage_payload(response) -> dict:
@@ -59,6 +80,7 @@ def _result(
     latency_ms: int,
     input_cost_per_1m: float | None = None,
     output_cost_per_1m: float | None = None,
+    reasoning: str | None = None,
 ) -> AIResult:
     prompt_tokens = int(usage.get("prompt_tokens") or 0)
     completion_tokens = int(usage.get("completion_tokens") or 0)
@@ -78,6 +100,7 @@ def _result(
         total_cost=round(input_cost + output_cost, 8),
         latency_ms=latency_ms,
         raw_usage=usage or None,
+        reasoning=reasoning,
     )
 
 
@@ -88,6 +111,40 @@ def _extract_image_urls(dialogue: list[dict]) -> list[str]:
             for m in _PICTURE_RE.finditer(msg.get("content", "")):
                 urls.append(m.group(1))
     return urls
+
+
+def _annotate_pictures(text: str) -> str:
+    """Replace `[picture] <url>` with a marker the text classifier can act on.
+
+    The reply generator gets the actual pixels, but classify_sales_intent runs on
+    a text-only model: it would see a bare amoCRM URL and cannot tell a jar of
+    cream from a selfie. Leaving the URL in also invites the model to invent
+    what the image shows. The marker says only what is certain — a photo exists.
+    """
+    return _PICTURE_RE.sub("[КЛИЕНТ ПРИСЛАЛ ФОТО]", text)
+
+
+def strip_voice_marker(text: str) -> str:
+    """Replace a leading `[voice] <url>` with the Whisper transcript that follows it.
+
+    Every AI call (intent classifier, reply generator, language detection) should
+    read the words the client actually said, not a bare amoCRM audio URL none of
+    them can open. If transcription failed and no words follow, fall back to a
+    marker so the model still knows a voice message arrived.
+    """
+    stripped = text.strip()
+    m = _VOICE_RE.match(stripped)
+    if not m:
+        return text
+    rest = stripped[m.end():].strip()
+    return rest or "[клиент отправил голосовое сообщение, распознать не удалось]"
+
+
+def _annotate_dialogue(dialogue: list[dict]) -> list[dict]:
+    return [
+        {**m, "content": strip_voice_marker(_annotate_pictures(m.get("content", "")))}
+        for m in dialogue
+    ]
 
 
 def _download_images_as_data_urls(urls: list[str], limit: int = 3) -> list[str]:
@@ -121,6 +178,7 @@ def _clean_dialogue(dialogue: list[dict]) -> list[dict]:
     cleaned = []
     for msg in dialogue:
         content = _PICTURE_RE.sub("[клиент прислал фото]", msg.get("content", ""))
+        content = strip_voice_marker(content)
         cleaned.append({"role": msg["role"], "content": content})
     return cleaned
 
@@ -186,10 +244,16 @@ def generate_reply(
     _base_prompt = system_prompt or SALES_AGENT_SYSTEM_PROMPT
     if memory_context and memory_context.strip():
         _base_prompt = _base_prompt + "\n\n---\nПАМЯТЬ МАГАЗИНА (используй эти данные при ответах):\n" + memory_context.strip()
+    _base_prompt = _base_prompt + (
+        "\n\n---\nФОРМАТ ОТВЕТА: верни строго JSON без пояснений вокруг: "
+        '{"reasoning": "1-3 предложения от первого лица — что учла и почему ответила именно так", '
+        '"reply": "текст ответа клиенту, как обычно"}.'
+    )
     try:
-        response = _client().chat.completions.create(
+        response = _create_completion(
             model=_model,
             temperature=0.5,
+            response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _base_prompt},
                 user_message,
@@ -200,23 +264,34 @@ def generate_reply(
             raise
         # Images rejected by the API — retry text-only so the client still gets a reply
         _log.warning("generate_reply 400 with images, retrying text-only")
-        response = _client().chat.completions.create(
+        response = _create_completion(
             model=_model,
             temperature=0.5,
+            response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": _base_prompt},
                 {"role": "user", "content": context_text},
             ],
         )
     latency_ms = int((perf_counter() - started) * 1000)
+    raw_content = response.choices[0].message.content or ""
+    try:
+        parsed = json.loads(raw_content)
+        reply_text = str(parsed.get("reply", "")).strip()
+        reasoning_text = str(parsed.get("reasoning", "")).strip() or None
+    except (json.JSONDecodeError, AttributeError):
+        _log.warning("generate_reply: model did not return JSON, using raw content as reply")
+        reply_text = raw_content.strip()
+        reasoning_text = None
     return _result(
-        content=(response.choices[0].message.content or "").strip(),
+        content=reply_text,
         model=_model,
         purpose="sales_agent",
         usage=_usage_payload(response),
         latency_ms=latency_ms,
         input_cost_per_1m=_in_cost,
         output_cost_per_1m=_out_cost,
+        reasoning=reasoning_text,
     )
 
 
@@ -250,7 +325,7 @@ def verify_reply(dialogue: list[dict], reply: str) -> tuple[str, AIResult | None
         # Last few turns are enough context for the checklist
         recent = _clean_dialogue(dialogue[-10:])
         payload = json.dumps({"dialogue": recent, "draft_reply": reply}, ensure_ascii=False)
-        response = _client().chat.completions.create(
+        response = _create_completion(
             model=settings.openai_extractor_model,
             temperature=0,
             response_format={"type": "json_object"},
@@ -292,7 +367,7 @@ def summarize_dialogue(dialogue: list[dict]) -> tuple[str, AIResult | None]:
             for m in dialogue
         )
         t0 = perf_counter()
-        response = _client().chat.completions.create(
+        response = _create_completion(
             model=settings.openai_extractor_model,
             temperature=0,
             messages=[
@@ -324,7 +399,7 @@ def detect_language(text: str) -> str:
     if not settings.openai_api_key or not text.strip():
         return "ru"
     try:
-        response = _client().chat.completions.create(
+        response = _create_completion(
             model=settings.openai_extractor_model,
             temperature=0,
             messages=[
@@ -347,7 +422,7 @@ def detect_and_translate(client_message: str, ai_reply: str) -> dict[str, str | 
     if not settings.openai_api_key:
         return {"client_translation": None, "ai_reply_translation": None}
     try:
-        response = _client().chat.completions.create(
+        response = _create_completion(
             model=settings.openai_extractor_model,
             temperature=0,
             messages=[
@@ -438,32 +513,113 @@ def call_gemini(model: str, messages: list[dict], temperature: float = 0.5) -> t
     return text.strip(), usage
 
 
+def _classify_intent_with_vision(
+    fallback: dict,
+    latest_message: str,
+    dialogue: list[dict],
+    image_urls: list[str],
+) -> AIResult | None:
+    """Classify intent while actually looking at the photos the client sent.
+
+    The prompt promises to spot `прислал фото товара`, but the default classifier
+    is a text-only model that only ever sees the amoCRM URL. Without this the rule
+    can never fire — a jar of cream and a selfie of acne look identical to it.
+
+    Returns None on any failure so the caller falls back to text classification:
+    a wrong `is_purchase` skips the AI reply and moves the lead to the purchase
+    stage, so guessing is worse than classifying on text alone.
+    """
+    data_urls = _download_images_as_data_urls(image_urls)
+    if not data_urls:
+        return None
+
+    payload = json.dumps(
+        {
+            "dialogue": _annotate_dialogue(dialogue[-20:]),
+            "latest_message": strip_voice_marker(_annotate_pictures(latest_message)),
+        },
+        ensure_ascii=False,
+    )
+    content_blocks: list[dict] = [{"type": "text", "text": payload}]
+    content_blocks += [{"type": "image_url", "image_url": {"url": u}} for u in data_urls]
+
+    try:
+        started = perf_counter()
+        response = _create_completion(
+            model=settings.openai_model,
+            temperature=0,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": SALES_INTENT_SYSTEM_PROMPT},
+                {"role": "user", "content": content_blocks},
+            ],
+        )
+        latency_ms = int((perf_counter() - started) * 1000)
+    except Exception:
+        _log.warning(
+            "vision intent classification failed for %d image(s), falling back to text",
+            len(data_urls),
+            exc_info=True,
+        )
+        return None
+
+    content = _normalize_intent(fallback, response.choices[0].message.content)
+    return _result(
+        content=content,
+        model=settings.openai_model,
+        purpose="sales_intent_vision",
+        usage=_usage_payload(response),
+        latency_ms=latency_ms,
+        input_cost_per_1m=settings.openai_input_cost_extractor,
+        output_cost_per_1m=settings.openai_output_cost_extractor,
+    )
+
+
+def _normalize_intent(fallback: dict, raw: str | None) -> dict:
+    content = fallback | json.loads(raw or "{}")
+    content["is_sales"] = bool(content.get("is_sales"))
+    content["is_complex"] = bool(content.get("is_complex", True))
+    # Anything truthy would route the lead to the purchase stage and skip the AI
+    # reply entirely, so coerce explicitly instead of trusting the model's JSON.
+    content["is_purchase"] = bool(content.get("is_purchase"))
+    return content
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def classify_sales_intent(dialogue: list[dict], latest_message: str) -> AIResult:
-    fallback = {"is_sales": True, "is_complex": True, "reason": "no_key"}
+    fallback = {"is_sales": True, "is_complex": True, "is_purchase": False, "reason": "no_key"}
     model = "deepseek-chat"
+
+    image_urls = _extract_image_urls([{"role": "user", "content": latest_message}])
+    if image_urls and settings.openai_api_key:
+        result = _classify_intent_with_vision(fallback, latest_message, dialogue, image_urls)
+        if result is not None:
+            return result
+
+    payload = json.dumps(
+        {
+            "dialogue": _annotate_dialogue(dialogue[-20:]),
+            "latest_message": strip_voice_marker(_annotate_pictures(latest_message)),
+        },
+        ensure_ascii=False,
+    )
 
     if not settings.deepseek_api_key:
         # fallback to openai if deepseek not configured
         if not settings.openai_api_key:
             return AIResult(content=fallback, model=model, purpose="sales_intent")
         started = perf_counter()
-        response = _client().chat.completions.create(
+        response = _create_completion(
             model=settings.openai_extractor_model,
             temperature=0,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": SALES_INTENT_SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(
-                    {"dialogue": dialogue[-20:], "latest_message": latest_message},
-                    ensure_ascii=False,
-                )},
+                {"role": "user", "content": payload},
             ],
         )
         latency_ms = int((perf_counter() - started) * 1000)
-        content = fallback | json.loads(response.choices[0].message.content or "{}")
-        content["is_sales"] = bool(content.get("is_sales"))
-        content["is_complex"] = bool(content.get("is_complex", True))
+        content = _normalize_intent(fallback, response.choices[0].message.content)
         return _result(content=content, model=settings.openai_extractor_model,
                        purpose="sales_intent", usage=_usage_payload(response), latency_ms=latency_ms,
                        input_cost_per_1m=settings.openai_input_cost_extractor,
@@ -476,15 +632,11 @@ def classify_sales_intent(dialogue: list[dict], latest_message: str) -> AIResult
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SALES_INTENT_SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(
-                {"dialogue": dialogue[-20:], "latest_message": latest_message},
-                ensure_ascii=False,
-            )},
+            {"role": "user", "content": payload},
         ],
     )
     latency_ms = int((perf_counter() - started) * 1000)
-    content = fallback | json.loads(response.choices[0].message.content or "{}")
-    content["is_sales"] = bool(content.get("is_sales"))
+    content = _normalize_intent(fallback, response.choices[0].message.content)
     return _result(
         content=content,
         model=model,
@@ -513,7 +665,7 @@ def extract_fields(dialogue: list[dict], contacts: str | None) -> AIResult:
     if not settings.openai_api_key:
         return AIResult(content=empty, model=settings.openai_extractor_model, purpose="lead_extractor")
     started = perf_counter()
-    response = _client().chat.completions.create(
+    response = _create_completion(
         model=settings.openai_extractor_model,
         temperature=0,
         response_format={"type": "json_object"},
@@ -546,11 +698,11 @@ def ai_edit_reply(original_reply: str, client_message: str, edit_prompt: str) ->
         "Сохраняй стиль и тон оригинала. Отвечай на том же языке что и оригинал."
     )
     user = (
-        f"Сообщение клиента:\n{client_message}\n\n"
+        f"Сообщение клиента:\n{strip_voice_marker(client_message)}\n\n"
         f"Оригинальный ответ:\n{original_reply}\n\n"
         f"Инструкция по изменению:\n{edit_prompt}"
     )
-    response = _client().chat.completions.create(
+    response = _create_completion(
         model=settings.openai_model_sales,
         temperature=0.4,
         messages=[
@@ -626,7 +778,7 @@ def translate_reply(original_reply: str, client_message: str, target_language: s
         f"Сообщение клиента для контекста:\n{client_message or '-'}\n\n"
         f"Ответ для перевода:\n{original_reply}"
     )
-    response = _client().chat.completions.create(
+    response = _create_completion(
         model=settings.openai_model_sales,
         temperature=0.1,
         messages=[
@@ -660,7 +812,7 @@ def explain_reply(client_message: str, reply: str, conversation_summary: str | N
     user = f"Сообщение клиента:\n{client_message}\n\nМой ответ:\n{reply}"
     if conversation_summary:
         user = f"Контекст диалога:\n{conversation_summary}\n\n{user}"
-    response = _client().chat.completions.create(
+    response = _create_completion(
         model=settings.openai_extractor_model,
         temperature=0.3,
         messages=[
@@ -698,7 +850,7 @@ def analyze_manager_corrections(examples: list[dict]) -> AIResult:
         '"expected_improvement": "честная экспертная оценка ожидаемого эффекта в свободной форме, '
         'явно как оценка, а не измеренная метрика"}'
     )
-    response = _client().chat.completions.create(
+    response = _create_completion(
         model=settings.openai_model_sales,
         temperature=0.2,
         response_format={"type": "json_object"},
@@ -744,8 +896,11 @@ def generate_purchase_template(dialogue: list[dict], client_message: str) -> tup
             f"Верни ТОЛЬКО текст с маркером {PURCHASE_PLACEHOLDER}, без кавычек и пояснений."
         )
         recent = _clean_dialogue(dialogue[-6:])
-        user = json.dumps({"dialogue": recent, "latest_message": client_message}, ensure_ascii=False)
-        response = _client().chat.completions.create(
+        user = json.dumps(
+            {"dialogue": recent, "latest_message": strip_voice_marker(client_message)},
+            ensure_ascii=False,
+        )
+        response = _create_completion(
             model=settings.openai_extractor_model,
             temperature=0.3,
             messages=[

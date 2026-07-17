@@ -13,12 +13,17 @@ _VOICE_RE = re.compile(r'\[(?:voice|audio)\]\s*(https?://\S+)')
 
 def _fmt_client_message(text: str) -> str:
     """Format client message for Telegram card display."""
-    m = _PICTURE_RE.match(text.strip())
+    stripped = text.strip()
+    m = _PICTURE_RE.match(stripped)
     if m:
         return f'📷 <a href="{m.group(1)}">фотография</a>'
-    m = _VOICE_RE.match(text.strip())
+    m = _VOICE_RE.match(stripped)
     if m:
-        return f'🎤 <a href="{m.group(1)}">голосовое сообщение</a>'
+        label = f'🎤 <a href="{m.group(1)}">голосовое сообщение</a>'
+        transcript = stripped[m.end():].strip()
+        if transcript:
+            label += f': «{escape(transcript)}»'
+        return label
     return escape(text)
 
 
@@ -35,6 +40,14 @@ def _fmt_phone(raw: str) -> str:
     if not digits.startswith("+") and len(digits) >= 10:
         return f"+{digits}"
     return raw
+
+
+def looks_like_phone(raw: str | None) -> bool:
+    """True, если строка целиком — номер: amoCRM кладёт его в имя автора, когда имени нет."""
+    value = raw or ""
+    digits = re.sub(r"\D", "", value)
+    return bool(digits) and len(digits) >= 9 and digits == re.sub(r"\s", "", value)
+
 
 from app.core.config import settings
 from app.models.entities import ApprovalRequest, Lead
@@ -125,8 +138,25 @@ def _api_url(method: str) -> str:
     return f"https://api.telegram.org/bot{settings.telegram_bot_token}/{method}"
 
 
+def is_test_lead(lead: Lead | None) -> bool:
+    return bool(lead is not None and getattr(lead, "is_test", False))
+
+
+def test_banner(lead: Lead | None) -> str:
+    """Шапка карточки тестового пользователя.
+
+    Менеджер работает с ней как с обычной, но должен сразу видеть, что клиент
+    ненастоящий: ответ никуда не уйдёт, а лида в amoCRM не существует.
+    """
+    return "🧪 <b>ТЕСТОВЫЙ ПОЛЬЗОВАТЕЛЬ</b> · лаборатория\n" if is_test_lead(lead) else ""
+
+
 def lead_url(lead: Lead) -> str:
     return f"{settings.amocrm_base_url.rstrip('/')}/leads/detail/{lead.amocrm_lead_id}"
+
+
+def crm_chat_url(lead: Lead) -> str:
+    return f"{settings.frontend_url.rstrip('/')}/chat/{lead.amocrm_lead_id}"
 
 
 def chat_history_url(lead: Lead) -> str:
@@ -286,7 +316,8 @@ def _purchase_card(
     if decision:
         now = datetime.now(ZoneInfo(settings.timezone)).strftime("%d.%m.%Y %H:%M")
         text += f"\n\n━━━━━━━━━━━━━━━━━━━━\n{decision} · {now}"
-        text += f"\n🔗 <a href=\"{lead_url(lead)}\">Открыть в amoCRM</a>"
+        if not is_test_lead(lead):
+            text += f"\n🔗 <a href=\"{lead_url(lead)}\">Открыть в amoCRM</a>"
     return text
 
 
@@ -334,6 +365,8 @@ def approval_card(
         header = f"🛒 <b>ХОЧЕТ КУПИТЬ · №{approval.id:07d}</b>\n"
     else:
         header = f"🟣 <b>Новый AI-ответ №{approval.id:07d}</b>\n"
+    # Одна точка: обе карточки — обычная и 🛒 ХОЧЕТ КУПИТЬ — собираются из header.
+    header = test_banner(lead) + header
     repeat_line = f"🔄 <b>Повторный клиент · {repeat_count} обращений</b>\n" if repeat_count > 1 else ""
 
     # Purchase-intent card: compact layout — no memory block, no AI reply,
@@ -372,19 +405,35 @@ def approval_card(
     if decision:
         now = datetime.now(ZoneInfo(settings.timezone)).strftime("%d.%m.%Y %H:%M")
         text += f"\n\n━━━━━━━━━━━━━━━━━━━━\n{decision} · {now}"
-        text += f"\n🔗 <a href=\"{lead_url(lead)}\">Открыть в amoCRM</a>"
+        if not is_test_lead(lead):
+            text += f"\n🔗 <a href=\"{lead_url(lead)}\">Открыть в amoCRM</a>"
     crm_lead_url = f"{settings.frontend_url}/chat/{lead.amocrm_lead_id}"
     text += f"\n\n<a href=\"{crm_lead_url}\">Открыть в CRM</a>"
     return text
 
 
-def approval_keyboard(approval_id: int, lead: Lead, has_templates: bool = False, is_purchase: bool = False) -> dict:
-    # Purchase-intent card gets only two actions: edit the full reply, or fill the template blank.
+def approval_keyboard(
+    approval_id: int,
+    lead: Lead,
+    has_templates: bool = False,
+    is_purchase: bool = False,
+    has_edited: bool = False,
+) -> dict:
+    # Purchase-intent card never carries an AI draft — only a fill-in template.
+    # «Принять» would send that placeholder to the client, so it appears only
+    # once a manager has written the real reply. «Отклонить» is always available.
     if is_purchase:
-        return {"inline_keyboard": [[
-            {"text": "✏️ Редактировать", "callback_data": f"pedit:{approval_id}"},
-            {"text": "💬 Ответить", "callback_data": f"answer:{approval_id}"},
-        ]]}
+        first_row = []
+        if has_edited:
+            first_row.append({"text": "✅ Принять", "callback_data": f"approve:{approval_id}"})
+        first_row.append({"text": "❌ Отклонить", "callback_data": f"reject:{approval_id}"})
+        return {"inline_keyboard": [
+            first_row,
+            [
+                {"text": "✏️ Редактировать", "callback_data": f"pedit:{approval_id}"},
+                {"text": "💬 Ответить", "callback_data": f"answer:{approval_id}"},
+            ],
+        ]}
     rows = [
         [
             {"text": "✅ Принять", "callback_data": f"approve:{approval_id}"},
@@ -407,11 +456,13 @@ def approval_keyboard(approval_id: int, lead: Lead, has_templates: bool = False,
         [{"text": "🌐 Перевести ответ", "callback_data": f"translate:{approval_id}"}],
         [{"text": "💡 Почему такой ответ?", "callback_data": f"why:{approval_id}"}],
         [{"text": "📝 Заметка", "callback_data": f"note:{approval_id}"}],
-        [
-            {"text": "📋 Открыть в CRM", "url": f"{settings.frontend_url}/chat/{lead.amocrm_lead_id}"},
-            {"text": "🔗 amoCRM", "url": lead_url(lead)},
-        ],
+        [{"text": "📋 Открыть в CRM", "url": crm_chat_url(lead)}],
     ]
+    # Тестового лида в amoCRM нет: и ссылка, и смена этапа там ведут в никуда.
+    if not is_test_lead(lead):
+        rows[-1].append({"text": "🔗 amoCRM", "url": lead_url(lead)})
+    else:
+        rows = [r for r in rows if not any(b.get("callback_data", "").startswith("move_stage:") for b in r)]
     return {"inline_keyboard": rows}
 
 
@@ -547,6 +598,78 @@ def _forward_client_photos(
                 _log.error("photo download error url=%.80s: %s", url, exc)
 
 
+def _send_voice_to_chats(
+    http: httpx.Client,
+    chat_ids: list[str],
+    reply_to_message_ids: dict[str, str] | None,
+    voice_url: str | None = None,
+    voice_bytes: bytes | None = None,
+    caption: str = "",
+) -> bool:
+    """Send a playable voice note to all chats. Returns True if at least one succeeded."""
+    ok = False
+    for chat_id in chat_ids:
+        try:
+            base: dict = {"chat_id": chat_id}
+            if caption:
+                base["caption"] = caption[:1024]
+            if reply_to_message_ids and chat_id in reply_to_message_ids:
+                base["reply_to_message_id"] = reply_to_message_ids[chat_id]
+            if voice_url:
+                resp = http.post(_api_url("sendVoice"), data={**base, "voice": voice_url})
+            else:
+                resp = http.post(
+                    _api_url("sendVoice"),
+                    files={"voice": ("voice.ogg", voice_bytes, "audio/ogg")},
+                    data=base,
+                )
+            if resp.is_success and resp.json().get("ok"):
+                ok = True
+            else:
+                _log.warning("sendVoice failed chat_id=%s: %s", chat_id, resp.text[:200])
+        except Exception as exc:
+            _log.error("sendVoice error chat_id=%s: %s", chat_id, exc)
+    return ok
+
+
+def _forward_client_voice(
+    client_message: str,
+    chat_ids: list[str],
+    reply_to_message_ids: dict[str, str] | None = None,
+) -> None:
+    """Send the [voice] attachment from the client message as a playable Telegram voice note.
+
+    So a manager can hear what the client actually said instead of trusting the
+    Whisper transcript alone.
+    """
+    m = _VOICE_RE.match(client_message.strip())
+    if not m or not settings.telegram_bot_token:
+        return
+    url = m.group(1)
+    transcript = client_message.strip()[m.end():].strip()
+    caption = f'Расшифровка: «{transcript}»'[:1024] if transcript else ""
+    auth_headers = {}
+    if settings.amocrm_access_token:
+        auth_headers["Authorization"] = f"Bearer {settings.amocrm_access_token}"
+    with httpx.Client(timeout=30, follow_redirects=True) as http:
+        # Try sending the URL directly — Telegram fetches it without our auth
+        sent = _send_voice_to_chats(http, chat_ids, reply_to_message_ids, voice_url=url, caption=caption)
+        if sent:
+            return
+        # Fallback: download with amoCRM Bearer token and upload as binary
+        try:
+            audio = http.get(url, headers=auth_headers)
+            if not audio.is_success:
+                _log.warning("voice download failed url=%.80s status=%s", url, audio.status_code)
+                return
+            _send_voice_to_chats(
+                http, chat_ids, reply_to_message_ids,
+                voice_bytes=audio.content, caption=caption,
+            )
+        except Exception as exc:
+            _log.error("voice download error url=%.80s: %s", url, exc)
+
+
 def send_approval_card(
     approval: ApprovalRequest,
     lead: Lead,
@@ -560,7 +683,12 @@ def send_approval_card(
         return {"skipped": True, "reason": "telegram not configured"}
     card_text = approval_card(approval, lead, messages_count=messages_count, last_message_time=last_message_time, repeat_count=repeat_count)
     is_purchase = bool((approval.extracted_fields or {}).get("_purchase_intent"))
-    keyboard = approval_keyboard(approval.id, lead, has_templates=has_templates, is_purchase=is_purchase)
+    keyboard = approval_keyboard(
+        approval.id, lead,
+        has_templates=has_templates,
+        is_purchase=is_purchase,
+        has_edited=bool(approval.edited_reply),
+    )
     message_ids: dict[str, str] = {}
     last_response: dict = {}
     with httpx.Client(timeout=20) as client:
@@ -588,9 +716,14 @@ def send_approval_card(
             except Exception as exc:
                 _log.error("telegram send error chat_id=%s: %s", chat_id, exc)
     last_response["_message_ids"] = json.dumps(message_ids)
-    # Send attached photos as replies to the approval card
+    # Send attached photos/voice as replies to the approval card
     if approval.client_message:
         _forward_client_photos(
+            approval.client_message,
+            list(_all_manager_chat_ids(extra_chat_ids)),
+            reply_to_message_ids=message_ids,
+        )
+        _forward_client_voice(
             approval.client_message,
             list(_all_manager_chat_ids(extra_chat_ids)),
             reply_to_message_ids=message_ids,
@@ -602,6 +735,7 @@ def edit_approval_card(
     approval: ApprovalRequest,
     lead: Lead,
     decision: str | None = None,
+    retry: bool = False,
     messages_count: int = 1,
     chat_id: str | None = None,
     last_message_time: str | None = None,
@@ -614,10 +748,19 @@ def edit_approval_card(
     if not pairs:
         return {"skipped": True}
     if decision:
-        keyboard = {"inline_keyboard": [[{"text": "📂 Открыть лид", "url": lead_url(lead)}]]}
+        target = crm_chat_url(lead) if is_test_lead(lead) else lead_url(lead)
+        rows = [[{"text": "📂 Открыть лид", "url": target}]]
+        if retry:
+            rows.append([{"text": "🔁 Повторить отправку", "callback_data": f"approve:{approval.id}"}])
+        keyboard = {"inline_keyboard": rows}
     else:
         is_purchase = bool((approval.extracted_fields or {}).get("_purchase_intent"))
-        keyboard = approval_keyboard(approval.id, lead, has_templates=has_templates, is_purchase=is_purchase)
+        keyboard = approval_keyboard(
+            approval.id, lead,
+            has_templates=has_templates,
+            is_purchase=is_purchase,
+            has_edited=bool(approval.edited_reply),
+        )
     card_text = approval_card(approval, lead, decision=decision, messages_count=messages_count, last_message_time=last_message_time, claimed_by_name=claimed_by_name)
     last_response: dict = {}
     any_success = False
@@ -686,6 +829,54 @@ def send_text_all_managers(text: str, parse_mode: str = "HTML", reply_markup: di
             except Exception as exc:
                 _log.error("send_text_all_managers error chat_id=%s: %s", chat_id, exc)
     return message_ids
+
+
+# ─── Клиенты, ожидающие ответа ───────────────────────────────────────────────
+# Кнопка обязана нести двоеточие: диспетчер в webhooks.py режет callback_data
+# по первому ":" и без него отвечает «Некорректная кнопка».
+WAITING_CALLBACK_DATA = "waiting:list"
+
+# Telegram обрежет сообщение длиннее 4096 символов, да и сотню номеров подряд
+# никто читать не станет.
+WAITING_LIST_LIMIT = 30
+
+
+def send_waiting_clients_digest(total: int) -> dict[str, str]:
+    """Ежедневная сводка всем менеджерам. Телефонов тут нет — они за кнопкой."""
+    if not total:
+        return send_text_all_managers(
+            "🕘 <b>Клиенты, которые ожидают ответа</b>\n\nНикто не ждёт — все заявки разобраны."
+        )
+    text = (
+        f"🕘 <b>Клиенты, которые ожидают ответа: {total}</b>\n\n"
+        "Нажмите «ПРИСЛАТЬ» — список придёт вам в личные сообщения."
+    )
+    keyboard = {"inline_keyboard": [[{"text": "📩 ПРИСЛАТЬ", "callback_data": WAITING_CALLBACK_DATA}]]}
+    return send_text_all_managers(text, reply_markup=keyboard)
+
+
+def waiting_clients_list(contacts: list[tuple[str | None, str]]) -> str:
+    """Список контактов плоским текстом: send_text не передаёт parse_mode."""
+    if not contacts:
+        return "Сейчас никто не ждёт ответа."
+
+    shown = contacts[:WAITING_LIST_LIMIT]
+    lines = [f"Ожидают ответа: {len(contacts)}", ""]
+    for i, (contact, amocrm_lead_id) in enumerate(shown, 1):
+        if not contact:
+            # Контакта нет вовсе — по ID лида клиента хотя бы найдут в amoCRM.
+            label = f"без контакта (лид {amocrm_lead_id})"
+        elif len(re.sub(r"\D", "", contact)) >= 9:
+            label = _fmt_phone(contact)
+        else:
+            # У части клиентов вместо номера ник в инстаграме — показываем как есть.
+            label = contact
+        lines.append(f"{i}. {label}")
+
+    hidden = len(contacts) - len(shown)
+    if hidden:
+        lines += ["", f"…и ещё {hidden}."]
+    return "\n".join(lines)
 
 
 def send_consultation_reminder_card(

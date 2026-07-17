@@ -24,8 +24,8 @@ from app.models.entities import (
     Setting,
     TrainingExample,
 )
-from app.services import amocrm, google_sheets, telegram
-from app.services.openai_service import AIResult, ai_edit_reply, classify_sales_intent, detect_and_translate, detect_language, extract_fields, generate_purchase_template, generate_reply, summarize_dialogue, verify_reply
+from app.services import amocrm, crm_notify, google_sheets, telegram
+from app.services.openai_service import AIResult, ai_edit_reply, classify_sales_intent, detect_and_translate, detect_language, extract_fields, generate_purchase_template, generate_reply, strip_voice_marker, summarize_dialogue, verify_reply
 from app.services.slots import check_consultation_slots
 from app.tasks.celery_app import celery_app
 
@@ -65,8 +65,23 @@ def save_ai_usage(db, lead_id: int, result: AIResult, message_id: int | None = N
     db.commit()
 
 
+def _is_test(lead: Lead | None) -> bool:
+    """Лид из AI-лаборатории: наружу от него ничего не уходит.
+
+    Пайплайн при этом отрабатывает целиком — классификация, ответ ИИ, карточка
+    менеджеру, кнопки. Разница только в том, что вместо вызова amoCRM / Sheets
+    мы пишем в action_logs статус dry_run: в терминале лаборатории видно, что
+    бот СОБИРАЛСЯ сделать, а прод-данные при этом не трогаются.
+    """
+    return bool(lead is not None and lead.is_test)
+
+
 def move_lead_status(db, lead: Lead, status_id: int | None, reason: str) -> None:
     if not status_id:
+        return
+    if _is_test(lead):
+        lead.status_id = status_id
+        log_action(db, lead.id, "amocrm.move_lead_status", "dry_run", {"reason": reason, "status_id": status_id})
         return
     try:
         response = amocrm.patch_lead_status(lead.amocrm_lead_id, status_id)
@@ -91,7 +106,9 @@ def move_lead_status(db, lead: Lead, status_id: int | None, reason: str) -> None
 
 
 def _lead_stage_snapshot(db, lead: Lead) -> dict:
-    if not settings.amocrm_access_token:
+    # У тестового лида нет соответствия в amoCRM: запрос вернул бы 404 и засорил
+    # ленту ошибкой. Этап такого лида живёт только в нашей leads.status_id.
+    if not settings.amocrm_access_token or _is_test(lead):
         return {}
     try:
         stage = amocrm.lead_stage_snapshot(lead.amocrm_lead_id)
@@ -373,6 +390,14 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
                 db.commit()
             except Exception as exc:
                 log_action(db, lead.id, "telegram.purchase_card", "error", error=exc)
+            if not _is_test(lead):
+                client_name = lead.client.name if lead.client else None
+                crm_notify.notify(
+                    type="sale_lead",
+                    title="Клиент хочет купить",
+                    body=f"{client_name or 'Клиент'} · заявка №{approval.id:07d}",
+                    is_important=True,
+                )
             log_action(db, lead.id, "pipeline.purchase_intent", "success", {"message": combined_text})
             return
 
@@ -416,7 +441,7 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
         slot_context["now_bishkek"] = _now_bk.strftime("%H:%M")
         slot_context["date_bishkek"] = _now_bk.strftime("%d.%m.%Y")
         slot_context["is_working_hours"] = 10 <= _now_bk.hour < 21
-        slot_context["client_language"] = detect_language(combined_text)
+        slot_context["client_language"] = detect_language(strip_voice_marker(combined_text))
 
         # Time of current client message (for card display)
         _current_msg_bk = buffers[-1].timestamp.astimezone(ZoneInfo(settings.timezone))
@@ -444,6 +469,7 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
             model_override=_model_setting.value if _model_setting and _model_setting.value else None,
         )
         reply = str(reply_result.content)
+        reply_reasoning = reply_result.reasoning
         save_ai_usage(db, lead.id, reply_result)
         # Self-check pass: fix repeats, extra questions, premature consult offers
         reply, _check_usage = verify_reply(dialogue, reply)
@@ -504,6 +530,7 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
                 conversation_summary=conv_summary or None,
                 client_message_translation=translations["client_translation"],
                 ai_reply_translation=translations["ai_reply_translation"],
+                ai_reasoning=reply_reasoning,
             )
             db.add(approval)
             db.commit()
@@ -562,6 +589,18 @@ def send_approved_reply(
         db.add(assistant_message)
     db.commit()
 
+    # Тестовый лид: ответ уже лежит в messages, значит и лаборатория, и история
+    # чата его покажут. В amoCRM он не уходит — этого клиента там не существует.
+    if _is_test(lead):
+        assistant_message.status = "sent"
+        if approval:
+            approval.status = "sent"
+        log_action(db, lead.id, "amocrm.send_message", "dry_run", {"text": reply})
+        db.commit()
+        if extracted:
+            update_integrations_after_approval(db, lead, extracted)
+        return True
+
     try:
         session = amocrm.create_chat_session()
         response = amocrm.send_chat_message(
@@ -590,6 +629,16 @@ def send_approved_reply(
 
 
 def update_integrations_after_approval(db, lead: Lead, extracted: dict) -> None:
+    # Тестовый лид: показываем в терминале, что бот записал бы в карточку и
+    # в таблицу, но ни одного внешнего вызова не делаем. Этап двигаем — он
+    # хранится у нас в leads.status_id, наружу move_lead_status тоже не пойдёт.
+    if _is_test(lead):
+        log_action(db, lead.id, "amocrm.patch_lead", "dry_run", extracted)
+        if extracted.get("consultation_confirmed") and extracted.get("consultation_date"):
+            log_action(db, lead.id, "google_sheets.update_consultation", "dry_run", extracted)
+        apply_sales_stage_from_extracted(db, lead, extracted)
+        return
+
     if settings.amocrm_access_token:
         try:
             fields = amocrm.get_lead_fields()
@@ -716,7 +765,7 @@ def pop_translate_session(db, manager_id: str) -> int | None:
 
 
 def set_claim(db, approval_id: int, manager_id: str, manager_name: str = "") -> None:
-    payload = f"{manager_id}\x00{manager_name}" if manager_name else manager_id
+    payload = json.dumps({"id": manager_id, "name": manager_name})
     _set_session(db, f"claimed:{approval_id}", payload)
 
 
@@ -724,31 +773,15 @@ def get_claim(db, approval_id: int) -> tuple[str, str] | None:
     value = _get_session(db, f"claimed:{approval_id}")
     if not value:
         return None
-    if "\x00" in value:
-        mid, name = value.split("\x00", 1)
-        return mid, name
-    return value, ""
+    try:
+        data = json.loads(value)
+        return data.get("id", ""), data.get("name", "")
+    except (json.JSONDecodeError, TypeError):
+        return value, ""
 
 
 def clear_claim(db, approval_id: int) -> None:
     _pop_session(db, f"claimed:{approval_id}")
-
-
-def _delete_overdue_reminder(db, approval_id: int) -> None:
-    """Delete overdue warning messages from all manager chats and remove the stored IDs."""
-    from app.models.entities import Setting
-    msg_key = f"overdue_msg:{approval_id}"
-    row = db.scalar(select(Setting).where(Setting.key == msg_key))
-    if not row:
-        return
-    try:
-        msg_ids: dict = json.loads(row.value)
-        for chat_id, message_id in msg_ids.items():
-            telegram.delete_message(chat_id, int(message_id))
-    except Exception:
-        pass
-    db.delete(row)
-    db.flush()
 
 
 def apply_ai_edited_reply(db, approval_id: int, manager_id: str, edit_prompt: str) -> ApprovalRequest | None:
@@ -776,11 +809,17 @@ def apply_ai_edited_reply(db, approval_id: int, manager_id: str, edit_prompt: st
     return approval
 
 
-def _update_card_or_notify(approval: ApprovalRequest, lead: Lead, decision: str, manager_name: str = "") -> None:
+def _update_card_or_notify(
+    approval: ApprovalRequest,
+    lead: Lead,
+    decision: str,
+    manager_name: str = "",
+    retry: bool = False,
+) -> None:
     try:
         decision_display = f"{decision} · {manager_name}" if manager_name else decision
         if approval.telegram_message_id:
-            telegram.edit_approval_card(approval, lead, decision=decision_display)
+            telegram.edit_approval_card(approval, lead, decision=decision_display, retry=retry)
         else:
             telegram.send_text(
                 settings.telegram_manager_chat_id,
@@ -798,14 +837,19 @@ def approve_request(db, approval_id: int, manager_id: str) -> bool:
     if not lead:
         return False
 
+    # Purchase-intent cards hold a fill-in template, not a real reply. Approving one
+    # before a manager edited it would send the placeholder to the client verbatim.
+    is_purchase = bool((approval.extracted_fields or {}).get("_purchase_intent"))
+    if is_purchase and not approval.edited_reply:
+        _log.warning("approve blocked: purchase approval %s has no edited reply", approval_id)
+        return False
+
     approval.status = "approved"
     approval.manager_telegram_id = manager_id
     approval.approved_at = datetime.now(ZoneInfo(settings.timezone))
     db.commit()
     clear_claim(db, approval_id)
-    _delete_overdue_reminder(db, approval_id)
     db.commit()
-    move_lead_status(db, lead, settings.amocrm_status_on_approve, "approval_accepted")
 
     latest_user_message = db.scalar(
         select(Message)
@@ -813,22 +857,31 @@ def approve_request(db, approval_id: int, manager_id: str) -> bool:
         .order_by(Message.created_at.desc())
         .limit(1)
     )
-    ok = False
-    if latest_user_message:
-        ok = send_approved_reply(
-            db,
-            lead,
-            latest_user_message.conversation_id,
-            str(approval.id),
-            approval.edited_reply or approval.ai_reply,
-            approval.extracted_fields,
-            approval,
-        )
-        if ok:
-            save_training_example(db, approval)
+    if not latest_user_message:
+        approval.status = "failed"
+        db.commit()
+        log_action(db, lead.id, "amocrm.send_message", "error", {"approval_id": approval.id}, error="No client message to reply to")
+        _update_card_or_notify(approval, lead, "⚠️ Не отправлено: нет сообщения клиента", _load_manager_name(db, manager_id))
+        return False
 
-    _update_card_or_notify(approval, lead, "✅ Принято", _load_manager_name(db, manager_id))
-    return ok
+    ok = send_approved_reply(
+        db,
+        lead,
+        latest_user_message.conversation_id,
+        str(approval.id),
+        approval.edited_reply or approval.ai_reply,
+        approval.extracted_fields,
+        approval,
+    )
+    manager_name = _load_manager_name(db, manager_id)
+    if not ok:
+        _update_card_or_notify(approval, lead, "⚠️ Не отправлено", manager_name, retry=True)
+        return False
+
+    move_lead_status(db, lead, settings.amocrm_status_on_approve, "approval_accepted")
+    save_training_example(db, approval)
+    _update_card_or_notify(approval, lead, "✅ Отправлено", manager_name)
+    return True
 
 
 def save_training_example(db, approval: ApprovalRequest) -> None:
@@ -874,7 +927,6 @@ def reject_request(db, approval_id: int, manager_id: str) -> bool:
     approval.manager_telegram_id = manager_id
     db.commit()
     clear_claim(db, approval_id)
-    _delete_overdue_reminder(db, approval_id)
     db.commit()
     lead = db.get(Lead, approval.lead_id)
     if lead:
