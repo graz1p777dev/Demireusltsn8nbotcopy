@@ -5,6 +5,7 @@ import { RefreshCw, Send, Bot, User, Power, PowerOff, MessageSquare, X, ChevronD
 
 import { useRouter } from "next/navigation";
 import { apiGet, apiJson, Conversation, API_BASE } from "@/lib/api";
+import { useCopilotPageContext } from "@/lib/copilot-context";
 
 type Message = { role: string; text: string; status: string; created_at: string };
 
@@ -154,6 +155,29 @@ export function SectionShell({
   );
 }
 
+/* ── Hint (dismissible via Настройки → Интерфейс) ── */
+export function Hint({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return <p className="hint" style={style}>{children}</p>;
+}
+
+export function HintsToggle() {
+  const [enabled, setEnabled] = useState(true);
+  useEffect(() => {
+    setEnabled(localStorage.getItem("hints") !== "off");
+  }, []);
+  const toggle = (checked: boolean) => {
+    setEnabled(checked);
+    localStorage.setItem("hints", checked ? "on" : "off");
+    document.documentElement.setAttribute("data-hints", checked ? "on" : "off");
+  };
+  return (
+    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-2)", cursor: "pointer" }}>
+      <input type="checkbox" checked={enabled} onChange={e => toggle(e.target.checked)} style={{ accentColor: "var(--primary)" }} />
+      Показывать подсказки рядом с функциями
+    </label>
+  );
+}
+
 
 /* ── Main Dashboard ── */
 export function Dashboard({ initialConversations }: { initialConversations: Conversation[] }) {
@@ -174,6 +198,10 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
       `${c.client ?? ""} ${c.amocrm_lead_id} ${c.chat_id ?? ""}`.toLowerCase().includes(query.toLowerCase())
     ),
     [conversations, query],
+  );
+
+  useCopilotPageContext(
+    selectedId ? { openLeadId: selectedId, clientName: detail?.lead.client ?? null } : undefined
   );
 
   const selectLead = useCallback(async (id: number) => {
@@ -317,6 +345,12 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
             </div>
           )}
         </div>
+
+        {detail && (
+          <div style={{ padding: "6px 18px 0" }}>
+            <Hint>Выключите AI — и бот перестанет отвечать клиенту, отвечать придётся вручную. Включить обратно можно в любой момент.</Hint>
+          </div>
+        )}
 
         {/* Metrics */}
         {detail && (
@@ -465,6 +499,7 @@ export function Dashboard({ initialConversations }: { initialConversations: Conv
             <span className="data-section-title" style={{ margin: 0 }}>Human Approvals</span>
             {collapsed.approvals ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
           </button>
+          {!collapsed.approvals && <Hint style={{ marginTop: 6 }}>Ответы бота, которые перед отправкой клиенту проверял менеджер в Telegram.</Hint>}
           {!collapsed.approvals && (detail?.approvals ?? []).slice(0, 4).map((a) => (
             <div className="approval-row" key={a.id} style={{ marginTop: 6 }}>
               <div className="approval-meta">
@@ -540,7 +575,8 @@ export function PromptPanel() {
   return (
     <section style={{ padding: "20px 24px" }}>
       {!open && (
-        <div style={{ marginBottom: 0 }}>
+        <div style={{ marginBottom: 0, display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-start" }}>
+          <Hint>Текст, по которому бот отвечает клиентам. Меняйте осторожно — правки сразу видят все.</Hint>
           <button className="btn-primary" style={{ padding: "6px 12px", fontSize: 12 }}
             onClick={() => setOpen(true)}>
             <Bot size={13} /> Редактировать промпт
@@ -550,9 +586,7 @@ export function PromptPanel() {
 
       {open && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <p style={{ fontSize: 12, color: "var(--text-3)", margin: 0 }}>
-            Системный промпт, которым руководствуется бот при ответах клиентам.
-          </p>
+          <Hint>Текст, по которому бот отвечает клиентам. Меняйте осторожно — правки сразу видят все.</Hint>
           {loading ? (
             <div className="muted" style={{ fontSize: 13 }}>Загрузка...</div>
           ) : (
@@ -635,9 +669,9 @@ export function BotModelPanel() {
 
   return (
     <section style={{ padding: "16px 20px" }}>
-      <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 14 }}>
-        Модели GPT для ответов бота. «Простые вопросы» — обычные сообщения, «Продажи» — возражения и сложные диалоги.
-      </p>
+      <Hint style={{ marginBottom: 14 }}>
+        Какая модель отвечает клиенту. «Простые вопросы» — обычные сообщения, «Продажи» — когда клиент сомневается или спорит.
+      </Hint>
       {loading ? (
         <div className="muted" style={{ fontSize: 13 }}>Загрузка моделей...</div>
       ) : (
@@ -717,10 +751,9 @@ export function BotMemoryPanel() {
 
   return (
     <section style={{ padding: "20px 24px" }}>
-      <p style={{ fontSize: 12, color: "var(--text-3)", margin: "0 0 14px" }}>
-        Информация о магазине которую бот использует при ответах: ассортимент, цены, доставка, бренды, особенности.
-        Бот будет ссылаться на эти данные когда клиент спрашивает о конкретных продуктах или услугах.
-      </p>
+      <Hint style={{ marginBottom: 14 }}>
+        Расскажите тут о магазине: ассортимент, цены, доставка, бренды. Бот заглядывает сюда, когда клиент спрашивает о товарах.
+      </Hint>
       {loading ? (
         <div style={{ color: "var(--text-3)", fontSize: 13 }}>Загрузка...</div>
       ) : (
@@ -834,8 +867,9 @@ export function UsersPanel() {
 
   return (
     <section style={{ padding: "20px 24px" }}>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 16 }}>
-        <button className="btn-primary" style={{ padding: "6px 12px", fontSize: 12 }}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 10 }}>
+        <Hint>Сотрудники, у которых есть вход сюда, в панель управления. Это не то же самое, что менеджеры в Telegram ниже.</Hint>
+        <button className="btn-primary" style={{ padding: "6px 12px", fontSize: 12, flexShrink: 0 }}
           onClick={() => setShowForm(!showForm)}>
           <UserPlus size={13} /> Добавить
         </button>
@@ -1092,9 +1126,9 @@ const TAG_STYLE: Record<ChangeEntry["tag"], { label: string; color: string; bg: 
 export function ChangelogPanel() {
   return (
     <section style={{ padding: "16px 20px" }}>
-      <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 20 }}>
+      <Hint style={{ marginBottom: 20 }}>
         Полная история изменений проекта Demi Results AI Bot.
-      </p>
+      </Hint>
       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         {CHANGELOG.map(group => (
           <div key={group.version}>
@@ -1247,9 +1281,9 @@ export function AiTestPanel() {
   return (
     <section style={{ padding: "16px 20px" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, gap: 10 }}>
-        <p style={{ fontSize: 12, color: "var(--text-3)", margin: 0 }}>
-          Полный тест бота: своя модель, температура, тестовый промпт (боевой промпт не меняется), фото и голосовые.
-        </p>
+        <Hint>
+          Проверьте, как ответит бот, ничего не трогая в проде. Можно сменить модель, промпт, отправить фото или голосовое.
+        </Hint>
         <button className="btn-ghost" onClick={() => setShowSettings(s => !s)}
           style={{ padding: "5px 10px", fontSize: 11, display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
           <Settings2 size={12} /> {showSettings ? "Скрыть настройки" : "Настройки теста"}
@@ -1276,6 +1310,7 @@ export function AiTestPanel() {
               <input type="range" min={0} max={1} step={0.05} value={temperature}
                 onChange={e => setTemperature(parseFloat(e.target.value))}
                 style={{ width: "100%", accentColor: "var(--primary)" }} />
+              <Hint>Больше — бот отвечает разнообразнее, но менее предсказуемо. Меньше — строже держится текста.</Hint>
             </div>
             <div>
               <label style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Max tokens (0 = ∞)</label>
@@ -1487,10 +1522,10 @@ export function ManagersPanel() {
 
   return (
     <section style={{ padding: "16px 20px" }}>
-      <p style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 14 }}>
-        Менеджеры получают Telegram-карточки с запросами на одобрение ответов бота.
-        Для добавления менеджер должен написать боту хотя бы одно сообщение.
-      </p>
+      <Hint style={{ marginBottom: 14 }}>
+        Менеджеры получают в Telegram карточки с ответами бота — их нужно одобрить перед отправкой клиенту.
+        Чтобы добавить менеджера, он должен сначала сам написать боту хотя бы одно сообщение.
+      </Hint>
 
       {/* Add form */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
@@ -1606,9 +1641,9 @@ export function TemplatesPanel() {
   return (
     <section style={{ padding: "20px 24px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <div style={{ fontSize: 12, color: "var(--text-3)" }}>
+        <Hint>
           Менеджер видит кнопку «📋 Шаблоны» в Telegram и выбирает готовый ответ одним нажатием
-        </div>
+        </Hint>
         <button className="btn-primary" style={{ padding: "7px 14px", fontSize: 12, display: "flex", alignItems: "center", gap: 5 }} onClick={openAdd}>
           <Plus size={12} /> Добавить
         </button>
@@ -1697,10 +1732,10 @@ export function StopWordsPanel() {
 
   return (
     <section style={{ padding: "20px 24px" }}>
-      <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 16 }}>
-        Если клиент напишет любое из этих слов — карточка придёт менеджеру с флагом <b>⛔</b>, без AI-ответа.
+      <Hint style={{ marginBottom: 16 }}>
+        Если клиент напишет одно из этих слов, бот промолчит — карточка сразу уйдёт менеджеру с флагом <b>⛔</b>.
         Примеры: <i>жалоба, верните, обман, аллергия, ожог</i>
-      </div>
+      </Hint>
 
       {loading ? (
         <div style={{ color: "var(--text-3)", fontSize: 13 }}>Загрузка…</div>

@@ -1,16 +1,18 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState, type CSSProperties } from "react";
-import { BarChart2, MessageSquare, Settings, CalendarCheck, Sun, Moon, FileBarChart2, Menu, Boxes, FlaskConical, HelpCircle, type LucideIcon } from "lucide-react";
+import { BarChart2, MessageSquare, Settings, CalendarCheck, Sun, Moon, FileBarChart2, Menu, Boxes, FlaskConical, HelpCircle, Sparkles, type LucideIcon } from "lucide-react";
 import { LiveClockWidget, LogoutButton } from "@/components/dashboard";
+import { useCopilotExtraValue } from "@/lib/copilot-context";
 
 type NavItem = { href: string; label: string; icon: LucideIcon; color: string; external?: boolean };
 
 const NAV_SECTIONS: { main: NavItem[]; admin: NavItem[] } = {
   main: [
     { href: "/", label: "Диалоги", icon: MessageSquare, color: "#6366F1" },
+    { href: "/assistant", label: "ИИ-помощник", icon: Sparkles, color: "#A855F7" },
   ],
   admin: [
     { href: "/analytics", label: "Аналитика", icon: BarChart2, color: "#14B8A6" },
@@ -59,6 +61,28 @@ function ThemeToggle() {
   );
 }
 
+function AskAiButton() {
+  const path = usePathname();
+  const router = useRouter();
+  const extra = useCopilotExtraValue();
+
+  if (path.startsWith("/assistant")) return null;
+
+  const go = () => {
+    const params = new URLSearchParams({ context_path: path });
+    if (extra) params.set("context_extra", JSON.stringify(extra));
+    router.push(`/assistant?${params.toString()}`);
+  };
+
+  return (
+    <button onClick={go} title="Спросить ИИ об этой странице" className="btn-secondary"
+      style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, padding: "6px 10px" }}>
+      <Sparkles size={13} />
+      <span className="nav-label">Спросить ИИ</span>
+    </button>
+  );
+}
+
 export function AppShell({ children, title, subtitle }: {
   children: React.ReactNode;
   title: string;
@@ -69,6 +93,12 @@ export function AppShell({ children, title, subtitle }: {
 
   // Close sidebar on navigation
   useEffect(() => { setMenuOpen(false); }, [path]);
+
+  // Подсказки включены по умолчанию, выключаются в Настройках → Интерфейс
+  useEffect(() => {
+    const hints = localStorage.getItem("hints");
+    document.documentElement.setAttribute("data-hints", hints === "off" ? "off" : "on");
+  }, []);
 
   return (
     <div className="shell">
@@ -119,6 +149,7 @@ export function AppShell({ children, title, subtitle }: {
             </div>
           </div>
           <div className="topbar-right">
+            <AskAiButton />
             <ThemeToggle />
             <LiveClockWidget />
             <span className="pill">
