@@ -124,7 +124,7 @@ KB: list[dict] = [
 ]
 
 
-def search_kb(query: str, top_k: int = 1) -> list[dict]:
+def search_kb_scored(query: str, top_k: int = 1) -> list[tuple[int, dict]]:
     """Simple keyword-overlap search — proportionate to ~9 KB entries, no
     embeddings/vector DB needed."""
     q_words = {w for w in query.lower().replace("?", "").replace(",", "").split() if len(w) > 2}
@@ -143,4 +143,8 @@ def search_kb(query: str, top_k: int = 1) -> list[dict]:
             scored.append((score, entry))
 
     scored.sort(key=lambda t: t[0], reverse=True)
-    return [entry for _, entry in scored[:top_k]]
+    return scored[:top_k]
+
+
+def search_kb(query: str, top_k: int = 1) -> list[dict]:
+    return [entry for _, entry in search_kb_scored(query, top_k)]
