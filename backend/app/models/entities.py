@@ -237,6 +237,50 @@ class Blacklist(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class CopilotConversation(Base, TimestampMixin):
+    __tablename__ = "copilot_conversations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    title: Mapped[str] = mapped_column(String(255), default="Новый чат")
+
+
+class CopilotMessage(Base):
+    __tablename__ = "copilot_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("copilot_conversations.id"), index=True)
+    role: Mapped[str] = mapped_column(String(32))
+    content: Mapped[str] = mapped_column(Text)
+    buttons: Mapped[list | None] = mapped_column(JSONB)
+    quick_actions: Mapped[list | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CopilotPendingAction(Base):
+    __tablename__ = "copilot_pending_actions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("copilot_conversations.id"), index=True)
+    tool_name: Mapped[str] = mapped_column(String(128))
+    payload: Mapped[dict] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Expense(Base):
+    __tablename__ = "expenses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(255))
+    amount: Mapped[float] = mapped_column()
+    currency: Mapped[str] = mapped_column(String(8), default="KGS")
+    category: Mapped[str | None] = mapped_column(String(128))
+    expense_date: Mapped[date] = mapped_column(Date, index=True)
+    created_by: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ConsultationReminder(Base, TimestampMixin):
     """Tracks per-consultation reminder cards sent to Telegram managers."""
     __tablename__ = "consultation_reminders"

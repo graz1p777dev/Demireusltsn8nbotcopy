@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { AppShell } from "@/components/app-shell";
 import { apiGet, apiJson } from "@/lib/api";
+import { useCopilotPageContext } from "@/lib/copilot-context";
 import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 
 type Slot = { time: string; status: "free" | "booked" | "blocked"; id: number | null; lead_id: number | null };
@@ -64,6 +65,10 @@ export default function ConsultationsPage() {
 
   const workingDays = visibleDays.filter(d => d.is_working);
   const intervalMin = data?.interval_minutes ?? 90;
+
+  useCopilotPageContext(
+    visibleDays.length ? { visibleDateRange: [visibleDays[0]?.date, visibleDays[visibleDays.length - 1]?.date] } : undefined
+  );
 
   return (
     <AppShell title="Консультации" subtitle="Расписание свободных слотов · каждая консультация 1–1.5 ч">
@@ -184,7 +189,7 @@ export default function ConsultationsPage() {
           </div>
         )}
 
-        <div style={{ marginTop: 20, padding: "14px 16px", background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 10, fontSize: 12, color: "var(--text-3)", lineHeight: 1.7 }}>
+        <div className="hint" style={{ marginTop: 20, padding: "14px 16px", background: "var(--bg-2)", border: "1px solid var(--border)", borderRadius: 10, fontSize: 12, color: "var(--text-3)", lineHeight: 1.7 }}>
           <strong style={{ color: "var(--text-2)" }}>Как пользоваться:</strong>
           <br />
           Нажмите на <span style={{ color: STATUS_COLOR.free }}>свободный</span> слот — он станет <span style={{ color: STATUS_COLOR.blocked }}>закрытым</span> (не будет предлагаться клиентам).

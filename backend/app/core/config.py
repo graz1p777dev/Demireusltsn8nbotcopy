@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     deepseek_input_cost_per_1m: float = 0.07    # deepseek-chat v3 pricing
     deepseek_output_cost_per_1m: float = 1.10
     gemini_api_key: str = ""
+
+    # AI Copilot ("ИИ-помощник") — read-only access to the inventory Supabase project
+    copilot_openai_model: str = "gpt-5.1"
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
     # Extractor/utility model pricing (gpt-4.1-mini or similar)
     openai_input_cost_extractor: float = 0.40
     openai_output_cost_extractor: float = 1.60
