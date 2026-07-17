@@ -5,7 +5,7 @@ actions, RBAC enforcement (via copilot_tools), and persistence.
 import json
 import logging
 
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -122,46 +122,53 @@ def handle_message(
     pending_payload: dict | None = None
     pending_tool_name: str | None = None
 
-    response = client.chat.completions.create(
-        model=settings.copilot_openai_model,
-        messages=messages,
-        tools=copilot_tools.TOOL_SCHEMAS,
-        tool_choice="auto",
-    )
-    msg = response.choices[0].message
-
-    if msg.tool_calls:
-        messages.append({"role": "assistant", "content": msg.content, "tool_calls": [
-            {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-            for tc in msg.tool_calls
-        ]})
-        for tc in msg.tool_calls:
-            name = tc.function.name
-            try:
-                args = json.loads(tc.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {}
-            result, pending = _dispatch_tool(db, user, name, args)
-            if pending is not None:
-                pending_payload = pending
-                pending_tool_name = name
-            kb_key = TOOL_TO_KB_KEY.get(name)
-            if kb_key and "error" not in result:
-                btn = _kb_button(kb_key)
-                if btn and btn not in buttons:
-                    buttons.append(btn)
-            messages.append({
-                "role": "tool", "tool_call_id": tc.id,
-                "content": json.dumps(result, ensure_ascii=False, default=str),
-            })
-
-        follow_up = client.chat.completions.create(
+    try:
+        response = client.chat.completions.create(
             model=settings.copilot_openai_model,
             messages=messages,
+            tools=copilot_tools.TOOL_SCHEMAS,
+            tool_choice="auto",
         )
-        reply = follow_up.choices[0].message.content or ""
-    else:
-        reply = msg.content or ""
+        msg = response.choices[0].message
+
+        if msg.tool_calls:
+            messages.append({"role": "assistant", "content": msg.content, "tool_calls": [
+                {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+                for tc in msg.tool_calls
+            ]})
+            for tc in msg.tool_calls:
+                name = tc.function.name
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                result, pending = _dispatch_tool(db, user, name, args)
+                if pending is not None:
+                    pending_payload = pending
+                    pending_tool_name = name
+                kb_key = TOOL_TO_KB_KEY.get(name)
+                if kb_key and "error" not in result:
+                    btn = _kb_button(kb_key)
+                    if btn and btn not in buttons:
+                        buttons.append(btn)
+                messages.append({
+                    "role": "tool", "tool_call_id": tc.id,
+                    "content": json.dumps(result, ensure_ascii=False, default=str),
+                })
+
+            follow_up = client.chat.completions.create(
+                model=settings.copilot_openai_model,
+                messages=messages,
+            )
+            reply = follow_up.choices[0].message.content or ""
+        else:
+            reply = msg.content or ""
+    except OpenAIError as e:
+        _log.warning("Copilot OpenAI call failed: %s", e)
+        return {
+            "reply": "ИИ-помощник временно недоступен — не удалось связаться с провайдером ИИ. Попробуйте ещё раз чуть позже.",
+            "buttons": [], "quick_actions": [], "pending_action": None,
+        }
 
     pending_action = None
     if pending_payload is not None:
