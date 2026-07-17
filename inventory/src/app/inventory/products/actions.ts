@@ -36,6 +36,16 @@ export interface ProductRow {
   min_stock_level: number
   is_active: boolean
   image_url: string | null
+  product_type: 'product' | 'service' | 'kit'
+  gtin: string | null
+  description: string | null
+  country: string | null
+  height_cm: number | null
+  width_cm: number | null
+  depth_cm: number | null
+  weight_kg: number | null
+  is_weighted: boolean
+  is_free_price: boolean
   stock_total: number
   stock_by_warehouse: Record<string, number>
 }
@@ -56,7 +66,7 @@ export async function getProductsPageData(): Promise<ProductsPageData> {
       supabase
         .from('inventory_products')
         .select(
-          'id, code, name, sku, barcode, category_id, unit, cost_price, retail_price, discount_percent, min_stock_level, is_active, image_url'
+          'id, code, name, sku, barcode, category_id, unit, cost_price, retail_price, discount_percent, min_stock_level, is_active, image_url, product_type, gtin, description, country, height_cm, width_cm, depth_cm, weight_kg, is_weighted, is_free_price'
         )
         .is('deleted_at', null)
         .order('name'),
@@ -74,9 +84,14 @@ export async function getProductsPageData(): Promise<ProductsPageData> {
 
   const productRows: ProductRow[] = (products ?? []).map((p) => ({
     ...p,
+    product_type: p.product_type === 'service' || p.product_type === 'kit' ? p.product_type : 'product',
     cost_price: Number(p.cost_price),
     retail_price: Number(p.retail_price),
     discount_percent: Number(p.discount_percent),
+    height_cm: p.height_cm === null ? null : Number(p.height_cm),
+    width_cm: p.width_cm === null ? null : Number(p.width_cm),
+    depth_cm: p.depth_cm === null ? null : Number(p.depth_cm),
+    weight_kg: p.weight_kg === null ? null : Number(p.weight_kg),
     stock_total: stockByProduct.get(p.id) ?? 0,
     stock_by_warehouse: stockByProductWarehouse.get(p.id) ?? {},
   }))
@@ -211,13 +226,27 @@ const ProductSchema = z.object({
   unit: z.enum(UNITS),
   cost_price: z.coerce.number().min(0),
   retail_price: z.coerce.number().min(0),
-  discount_percent: z.coerce.number().min(0).max(100),
+  discount_percent: z.coerce.number().min(0, 'Скидка не может быть отрицательной').max(100, 'Скидка не может быть больше 100%'),
   min_stock_level: z.coerce.number().int().min(0),
+  product_type: z.enum(['product', 'service', 'kit']),
+  gtin: z.string().regex(/^\d{8,14}$/, 'GTIN должен содержать от 8 до 14 цифр').nullable(),
+  description: z.string().nullable(),
+  country: z.string().nullable(),
+  height_cm: z.coerce.number().min(0).nullable(),
+  width_cm: z.coerce.number().min(0).nullable(),
+  depth_cm: z.coerce.number().min(0).nullable(),
+  weight_kg: z.coerce.number().min(0).nullable(),
+  is_weighted: z.boolean(),
+  is_free_price: z.boolean(),
 })
 
 function readProductFormFields(formData: FormData) {
   const categoryIdRaw = formData.get('category_id')
   const barcodeRaw = formData.get('barcode')
+  const emptyToNull = (value: FormDataEntryValue | null) => {
+    const text = typeof value === 'string' ? value.trim() : ''
+    return text.length > 0 ? text : null
+  }
   return {
     name: formData.get('name'),
     sku: formData.get('sku'),
@@ -228,6 +257,16 @@ function readProductFormFields(formData: FormData) {
     retail_price: formData.get('retail_price'),
     discount_percent: formData.get('discount_percent'),
     min_stock_level: formData.get('min_stock_level'),
+    product_type: formData.get('product_type'),
+    gtin: emptyToNull(formData.get('gtin')),
+    description: emptyToNull(formData.get('description')),
+    country: emptyToNull(formData.get('country')),
+    height_cm: emptyToNull(formData.get('height_cm')),
+    width_cm: emptyToNull(formData.get('width_cm')),
+    depth_cm: emptyToNull(formData.get('depth_cm')),
+    weight_kg: emptyToNull(formData.get('weight_kg')),
+    is_weighted: formData.get('is_weighted') === 'true',
+    is_free_price: formData.get('is_free_price') === 'true',
   }
 }
 

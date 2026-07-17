@@ -11,14 +11,14 @@ import {
   TableCell,
 } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
-import { DOCUMENTS_MOCK } from "@/app/inventory/_data/mock-dashboard"
+import type { DashboardData } from "@/app/inventory/dashboard-actions"
 
 function formatMoney(value: number): string {
   if (value === 0) return "—"
   return `${value.toLocaleString("ru-RU")} ₽`
 }
 
-export function DocumentsTable() {
+export function DocumentsTable({ rows }: { rows: DashboardData["documents"] }) {
   return (
     <Card className="overflow-hidden py-0">
       <CardHeader className="border-b border-border py-3">
@@ -49,8 +49,10 @@ export function DocumentsTable() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {DOCUMENTS_MOCK.map((row) => (
-              <TableRow key={row.name}>
+            {rows.length === 0 ? (
+              <TableRow><TableCell colSpan={4} className="py-8 text-center text-muted-foreground">За текущий месяц нет проведённых документов</TableCell></TableRow>
+            ) : rows.map((row, index) => (
+              <TableRow key={`${row.name}-${index}`}>
                 <TableCell className="pl-4 font-semibold">{row.name}</TableCell>
                 <TableCell className="text-right font-mono">{row.quantity}</TableCell>
                 <TableCell className="text-right font-mono font-semibold">

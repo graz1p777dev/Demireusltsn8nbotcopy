@@ -10,9 +10,9 @@ import {
   ResponsiveContainer,
 } from "recharts"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import { REVENUE_TREND_MOCK } from "@/app/inventory/_data/mock-dashboard"
+import type { DashboardData } from "@/app/inventory/dashboard-actions"
 
-export function RevenueChart() {
+export function RevenueChart({ data }: { data: DashboardData["revenueTrend"] }) {
   return (
     <Card>
       <CardHeader className="flex items-center justify-between">
@@ -21,7 +21,7 @@ export function RevenueChart() {
       </CardHeader>
       <CardContent className="h-52">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={REVENUE_TREND_MOCK} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+          <AreaChart data={data} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="revenueFill" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.18} />
@@ -40,7 +40,7 @@ export function RevenueChart() {
             />
             <YAxis hide domain={["dataMin - 5000", "dataMax + 5000"]} />
             <Tooltip
-              formatter={(value: unknown) => [`${Number(value).toLocaleString("ru-RU")} ₽`, "Выручка"]}
+              formatter={(value: unknown) => [`${Number(value).toLocaleString("ru-RU")} сом`, "Выручка"]}
               labelFormatter={(day) => `День ${day}`}
               contentStyle={{
                 background: "var(--popover)",

@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
-import { requireOwner } from '@/lib/require-owner'
+import { requireOwner, requireSeller } from '@/lib/require-owner'
 import { getDocumentTypeConfig, type InventoryDocType } from '@/config/document-types'
 
 export type ActionResult = { success: true } | { success: false; error: string }
@@ -228,7 +228,7 @@ export async function saveDocument(
   formData: FormData,
   post: boolean
 ): Promise<ActionResult & { id?: string }> {
-  const guard = await requireOwner()
+  const guard = docType === 'sale' ? await requireSeller() : await requireOwner()
   if (!guard.ok) return { success: false, error: guard.error }
 
   const config = getDocumentTypeConfig(docType)
@@ -300,9 +300,8 @@ export async function saveDocument(
 
     if (deleteItemsError) return { success: false, error: deleteItemsError.message }
   } else {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return { success: false, error: 'Не авторизован' }
 
     const { data: created, error: insertError } = await supabase
       .from('inventory_documents')
@@ -313,7 +312,7 @@ export async function saveDocument(
         supplier_id: parsed.data.supplier_id,
         comment: parsed.data.comment,
         total_amount: totalAmount,
-        created_by: session?.user.id ?? null,
+        created_by: user.id,
       })
       .select('id')
       .single()

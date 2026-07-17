@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useTransition } from "react"
 import { toast } from "sonner"
 import { Upload } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
@@ -14,21 +14,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { saveCompanySettings, type CompanySettings } from "@/app/inventory/company/actions"
 
-const CURRENCIES = ["Сом (KGS)", "Рубль (RUB)", "Доллар (USD)"] as const
-const TIMEZONES = ["GMT+6 · Бишкек", "GMT+3 · Москва", "GMT+5 · Ташкент"] as const
+const CURRENCIES = [{ value: "KGS", label: "Сом (KGS)" }, { value: "RUB", label: "Рубль (RUB)" }, { value: "USD", label: "Доллар (USD)" }] as const
+const TIMEZONES = [{ value: "Asia/Bishkek", label: "GMT+6 · Бишкек" }, { value: "Europe/Moscow", label: "GMT+3 · Москва" }, { value: "Asia/Tashkent", label: "GMT+5 · Ташкент" }] as const
 
-export function CompanySettingsClient() {
-  const [name, setName] = useState("ОсОО «Demi Beauty»")
-  const [inn, setInn] = useState("02508201910123")
-  const [director, setDirector] = useState("Джолдошев С. К.")
-  const [phone, setPhone] = useState("+996 555 00-11-22")
-  const [address, setAddress] = useState("г. Бишкек, пр. Чуй 154")
-  const [currency, setCurrency] = useState<string>(CURRENCIES[0])
-  const [timezone, setTimezone] = useState<string>(TIMEZONES[0])
+export function CompanySettingsClient({ initialSettings }: { initialSettings: CompanySettings }) {
+  const [name, setName] = useState(initialSettings.name)
+  const [inn, setInn] = useState(initialSettings.inn)
+  const [director, setDirector] = useState(initialSettings.director)
+  const [phone, setPhone] = useState(initialSettings.phone)
+  const [address, setAddress] = useState(initialSettings.address)
+  const [currency, setCurrency] = useState(initialSettings.currency)
+  const [timezone, setTimezone] = useState(initialSettings.timezone)
+  const [, startTransition] = useTransition()
 
+  function handleCancel() {
+    setName(initialSettings.name); setInn(initialSettings.inn); setDirector(initialSettings.director); setPhone(initialSettings.phone); setAddress(initialSettings.address); setCurrency(initialSettings.currency); setTimezone(initialSettings.timezone)
+  }
   function handleSave() {
-    toast.success("Реквизиты сохранены")
+    startTransition(async () => {
+      const result = await saveCompanySettings({ name, inn, director, phone, address, currency, timezone })
+      if (!result.success) {
+        toast.error(result.error)
+        return
+      }
+      toast.success("Настройки компании сохранены")
+    })
   }
 
   return (
@@ -58,9 +70,9 @@ export function CompanySettingsClient() {
               <Input id="company-address" value={address} onChange={(e) => setAddress(e.target.value)} />
             </div>
           </div>
-          <div className="mt-5 flex gap-2.5">
+          <div className="mt-5 flex justify-end gap-2.5">
+            <Button variant="outline" onClick={handleCancel}>Отмена</Button>
             <Button onClick={handleSave}>Сохранить</Button>
-            <Button variant="outline">Отмена</Button>
           </div>
         </CardContent>
       </Card>
@@ -68,14 +80,10 @@ export function CompanySettingsClient() {
       <Card>
         <CardContent>
           <p className="mb-4 text-sm font-bold">Логотип и валюта</p>
-          <button
-            type="button"
-            onClick={() => toast("Скоро будет доступно")}
-            className="flex h-[120px] w-full flex-col items-center justify-center gap-1.5 rounded-[11px] border-[1.5px] border-dashed border-input text-muted-foreground transition-colors hover:border-ring hover:bg-accent/40"
-          >
+          <div role="img" aria-disabled="true" title="Загрузка логотипа скоро будет доступна" className="flex h-[120px] w-full flex-col items-center justify-center gap-1.5 rounded-[11px] border-[1.5px] border-dashed border-input text-muted-foreground transition-colors hover:border-ring hover:bg-accent/40 opacity-60">
             <Upload className="size-6" />
             <span className="text-xs font-medium">Загрузить логотип</span>
-          </button>
+          </div>
 
           <div className="mt-4 flex flex-col gap-1.5">
             <Label>Валюта учёта</Label>
@@ -85,8 +93,8 @@ export function CompanySettingsClient() {
               </SelectTrigger>
               <SelectContent>
                 {CURRENCIES.map((c) => (
-                  <SelectItem key={c} value={c}>
-                    {c}
+                  <SelectItem key={c.value} value={c.value}>
+                    {c.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -101,8 +109,8 @@ export function CompanySettingsClient() {
               </SelectTrigger>
               <SelectContent>
                 {TIMEZONES.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {t}
+                  <SelectItem key={t.value} value={t.value}>
+                    {t.label}
                   </SelectItem>
                 ))}
               </SelectContent>

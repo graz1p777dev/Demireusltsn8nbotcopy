@@ -1,10 +1,13 @@
 import csv
 import io
 import json as _json
+import logging
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -25,6 +28,7 @@ from app.models.entities import (
     Conversation,
     Lead,
     Message,
+    MessageBuffer,
     Setting,
     TrainingExample,
 )
@@ -32,6 +36,7 @@ from app.services.slots import day_slots, is_working_day
 from app.services import amocrm
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+_log = logging.getLogger(__name__)
 
 
 @router.get("/chat/{amocrm_lead_id}")
@@ -56,6 +61,8 @@ def get_chat_history(amocrm_lead_id: str, db: Session = Depends(get_db)) -> dict
             "text": m.text,
             "status": m.status,
             "created_at": m.created_at,
+            "media_url": m.media_url,
+            "message_type": m.message_type,
         }
         for m in messages
     ] + [
@@ -65,6 +72,8 @@ def get_chat_history(amocrm_lead_id: str, db: Session = Depends(get_db)) -> dict
             "text": a.ai_reply,
             "status": "pending_review",
             "created_at": a.created_at,
+            "media_url": None,
+            "message_type": "text",
         }
         for a in pending_approvals
         if a.ai_reply and a.ai_reply.strip()
@@ -80,6 +89,32 @@ def get_chat_history(amocrm_lead_id: str, db: Session = Depends(get_db)) -> dict
             for r in rows
         ],
     }
+
+
+@router.get("/attachment/{message_id}")
+def get_attachment(message_id: int, db: Session = Depends(get_db)):
+    """Stream a client's voice/photo attachment through the backend.
+
+    amoCRM attachment links require our Bearer token, which the CRM browser
+    doesn't have. The URL always comes from a stored Message row — never from
+    caller input — so this cannot be used to fetch arbitrary URLs with our
+    credentials.
+    """
+    message = db.get(Message, message_id)
+    if not message or not message.media_url:
+        raise HTTPException(404, "Attachment not found")
+    auth_headers = {}
+    if app_settings.amocrm_access_token:
+        auth_headers["Authorization"] = f"Bearer {app_settings.amocrm_access_token}"
+    try:
+        with httpx.Client(timeout=30, follow_redirects=True) as http:
+            resp = http.get(message.media_url, headers=auth_headers)
+    except Exception:
+        raise HTTPException(502, "Could not fetch attachment")
+    if not resp.is_success:
+        raise HTTPException(502, "Could not fetch attachment")
+    content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0].strip()
+    return StreamingResponse(io.BytesIO(resp.content), media_type=content_type)
 
 
 class ToggleAI(BaseModel):
@@ -515,6 +550,310 @@ async def ai_test_transcribe(file: UploadFile = File(...)) -> dict:
         return {"ok": True, "text": (tr.text or "").strip()}
     except Exception as e:
         return {"ok": False, "text": "", "error": str(e)}
+
+
+# ─── Лента действий бота (терминал в AI-лаборатории) ─────────────────────────
+# action_logs копится с самого запуска бота и весит немало: одна строка
+# amocrm.send_message — это до 2.5 КБ сырого ответа amoCRM. Терминал опрашивает
+# ленту раз в секунду, поэтому наружу отдаём только то, что он рисует, а полный
+# payload — отдельным запросом по клику на строку.
+
+_TEXT_CAP = 200
+
+
+def _clip(value: object, cap: int = _TEXT_CAP) -> str:
+    text_value = value if isinstance(value, str) else str(value)
+    return text_value if len(text_value) <= cap else text_value[: cap - 1] + "…"
+
+
+def _filled_fields(fields: object) -> list[str]:
+    """Имена заполненных полей карточки. Ключи с подчёркиванием — служебные."""
+    if not isinstance(fields, dict):
+        return []
+    return [k for k, v in fields.items() if not k.startswith("_") and v not in (None, "", [], {})]
+
+
+def _summarize(action: str, request: object, response: object, error: str | None) -> dict:
+    """Компактная выжимка строки лога: только примитивы, никаких сырых payload'ов."""
+    req = request if isinstance(request, dict) else {}
+    resp = response if isinstance(response, dict) else {}
+
+    if action == "amocrm.move_lead_status":
+        return {"status_id": req.get("status_id"), "reason": _clip(req.get("reason", ""), 120) or None}
+
+    if action == "amocrm.patch_lead":
+        # На success сюда кладут уже готовый patch, на skipped/error — сырые поля.
+        fields = _filled_fields(req)
+        return {"fields": fields, "count": len(fields), "reason": resp.get("reason")}
+
+    if action == "openai.extract_fields":
+        fields = _filled_fields(resp.get("fields"))
+        return {"fields": fields, "count": len(fields)}
+
+    if action == "openai.sales_intent":
+        intent = resp.get("intent") if isinstance(resp.get("intent"), dict) else {}
+        return {
+            "is_sales": intent.get("is_sales"),
+            "is_purchase": intent.get("is_purchase"),
+            "is_complex": intent.get("is_complex"),
+            # Модель пишет обоснование свободным текстом, иногда на несколько строк.
+            "reason": _clip(intent.get("reason", ""), 120) or None,
+            "message": _clip(req.get("latest_message", ""), 120),
+        }
+
+    if action == "openai.sales_agent":
+        return {"dialogue_messages": req.get("dialogue_messages"), "tokens": resp.get("total_tokens")}
+
+    if action == "amocrm.send_message":
+        return {"text": _clip(req.get("text", ""))}
+
+    if action in {"pipeline.non_sales_routed", "pipeline.skip_scheduled_consultation"}:
+        reason = req.get("reason") or req.get("stage_name") or ""
+        return {"reason": _clip(reason, 120) or None, "message": _clip(req.get("message", ""), 120)}
+
+    if action == "pipeline.purchase_intent":
+        return {"message": _clip(req.get("message", ""), 120)}
+
+    if action == "pipeline.blacklisted":
+        return {"phone": req.get("phone")}
+
+    if action == "training.example_saved":
+        return {"approval_id": req.get("approval_id"), "was_edited": req.get("was_edited")}
+
+    if action.startswith("telegram."):
+        return {"approval_id": req.get("approval_id")}
+
+    return {}
+
+
+@router.get("/action-logs")
+def action_logs(
+    db: Session = Depends(get_db),
+    after_id: int | None = None,
+    limit: int = 50,
+    lead_id: int | None = None,
+    action: str | None = None,
+) -> dict:
+    """Лента действий бота. Без after_id — последние `limit` строк, иначе только новые.
+
+    Всегда возвращает строки по возрастанию id: терминал дописывает их снизу.
+    """
+    limit = max(1, min(limit, 200))
+
+    stmt = select(ActionLog)
+    if lead_id is not None:
+        stmt = stmt.where(ActionLog.lead_id == lead_id)
+    if action:
+        # Префикс: "amocrm" отберёт все amocrm.*, точное имя — ровно его.
+        stmt = stmt.where(ActionLog.action.startswith(action))
+
+    if after_id is None:
+        # Первая загрузка: берём хвост через desc + limit, потом разворачиваем.
+        rows = list(db.scalars(stmt.order_by(desc(ActionLog.id)).limit(limit)).all())
+        rows.reverse()
+    else:
+        rows = list(db.scalars(stmt.where(ActionLog.id > after_id).order_by(ActionLog.id).limit(limit)).all())
+
+    lead_ids = {r.lead_id for r in rows if r.lead_id is not None}
+    leads: dict[int, Lead] = {}
+    if lead_ids:
+        leads = {lead.id: lead for lead in db.scalars(select(Lead).where(Lead.id.in_(lead_ids))).all()}
+
+    items = []
+    for row in rows:
+        lead = leads.get(row.lead_id) if row.lead_id is not None else None
+        items.append(
+            {
+                "id": row.id,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "action": row.action,
+                "status": row.status,
+                "lead_id": row.lead_id,
+                "amocrm_lead_id": lead.amocrm_lead_id if lead else None,
+                "client_name": lead.client.name if lead and lead.client else None,
+                "error": _clip(row.error) if row.error else None,
+                "detail": _summarize(row.action, row.request_payload, row.response_payload, row.error),
+            }
+        )
+
+    # last_id из строк, а не из max(id) таблицы: иначе фильтр по lead_id/action
+    # заставил бы терминал перескочить через ещё не показанные строки.
+    return {"items": items, "last_id": items[-1]["id"] if items else after_id}
+
+
+@router.get("/action-logs/{log_id}")
+def action_log_detail(log_id: int, db: Session = Depends(get_db)) -> dict:
+    """Полный payload одной строки — по клику в терминале, а не в общей ленте."""
+    row = db.get(ActionLog, log_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="action log not found")
+    return {
+        "id": row.id,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "action": row.action,
+        "status": row.status,
+        "lead_id": row.lead_id,
+        "error": row.error,
+        "request_payload": row.request_payload,
+        "response_payload": row.response_payload,
+    }
+
+
+# ─── Тестовые пользователи лаборатории ───────────────────────────────────────
+# Тестовый лид — обычный лид с флагом is_test. Его сообщение идёт через тот же
+# upsert_incoming и тот же process_lead_buffer, что и сообщение живого клиента:
+# буфер, классификация, ответ ИИ, карточка менеджеру, кнопки. Разница ровно одна —
+# наружу (amoCRM, Google Sheets) не уходит ничего, см. _is_test в pipeline.py.
+
+_TEST_LEAD_PREFIX = "test-"
+
+
+class TestUserCreate(BaseModel):
+    name: str
+    contact: str | None = None
+
+
+class TestUserMessage(BaseModel):
+    text: str
+
+
+def _test_lead_or_404(db: Session, lead_pk: int) -> Lead:
+    lead = db.get(Lead, lead_pk)
+    if not lead:
+        raise HTTPException(status_code=404, detail="lead not found")
+    # Через ручки лаборатории нельзя дотянуться до живого клиента.
+    if not lead.is_test:
+        raise HTTPException(status_code=403, detail="lead is not a test user")
+    return lead
+
+
+def _test_user_row(db: Session, lead: Lead) -> dict:
+    last = db.scalar(
+        select(Message).where(Message.lead_id == lead.id).order_by(desc(Message.created_at)).limit(1)
+    )
+    pending = db.scalar(
+        select(func.count(ApprovalRequest.id)).where(
+            ApprovalRequest.lead_id == lead.id, ApprovalRequest.status == "pending"
+        )
+    )
+    return {
+        "id": lead.id,
+        "amocrm_lead_id": lead.amocrm_lead_id,
+        "name": lead.client.name if lead.client else None,
+        "contact": lead.client.phone if lead.client else None,
+        "ai_enabled": lead.ai_enabled,
+        "created_at": lead.created_at.isoformat() if lead.created_at else None,
+        "last_message": (last.text[:120] if last and last.text else None),
+        "last_message_role": last.role if last else None,
+        "pending_approvals": int(pending or 0),
+    }
+
+
+@router.get("/lab/test-users")
+def lab_test_users(db: Session = Depends(get_db)) -> list[dict]:
+    leads = db.scalars(select(Lead).where(Lead.is_test.is_(True)).order_by(desc(Lead.id))).all()
+    return [_test_user_row(db, lead) for lead in leads]
+
+
+@router.post("/lab/test-users", status_code=201)
+def lab_create_test_user(body: TestUserCreate, db: Session = Depends(get_db)) -> dict:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+
+    token = uuid4().hex[:12]
+    client = Client(amocrm_author_id=f"test:{token}", name=name, phone=(body.contact or "").strip() or None, source="lab")
+    db.add(client)
+    db.flush()
+
+    lead = Lead(
+        # Префикс делает синтетический id узнаваемым и в базе, и в ссылке /chat/<id>.
+        amocrm_lead_id=f"{_TEST_LEAD_PREFIX}{token}",
+        client_id=client.id,
+        chat_id=f"test:{token}",
+        contact_id=None,
+        is_test=True,
+        ai_enabled=True,
+    )
+    db.add(lead)
+    db.commit()
+    db.refresh(lead)
+    return _test_user_row(db, lead)
+
+
+@router.post("/lab/test-users/{lead_pk}/messages")
+def lab_test_user_message(lead_pk: int, body: TestUserMessage, db: Session = Depends(get_db)) -> dict:
+    lead = _test_lead_or_404(db, lead_pk)
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+
+    from app.schemas.amocrm import IncomingMessage
+    from app.services.repository import upsert_incoming
+    from app.tasks.pipeline import process_lead_buffer
+
+    message_id = f"lab:{uuid4().hex}"
+    incoming = IncomingMessage(
+        raw={"source": "lab", "lead_pk": lead.id},
+        text=text,
+        direction="incoming",
+        chat_id=lead.chat_id or "",
+        message_id=message_id,
+        client_id=lead.client.amocrm_author_id if lead.client else f"test:{lead.id}",
+        client_name=(lead.client.name if lead.client else "Тестовый клиент"),
+        lead_id=lead.amocrm_lead_id,
+        source="lab",
+        timestamp=datetime.now(ZoneInfo(app_settings.timezone)),
+    )
+    _lead, _conversation, is_new = upsert_incoming(db, incoming)
+
+    queued = False
+    if is_new and lead.ai_enabled:
+        # Тот же буфер, что и у живых клиентов: несколько сообщений подряд
+        # склеятся в один запрос к модели.
+        process_lead_buffer.apply_async(
+            args=[lead.id, message_id],
+            countdown=app_settings.message_buffer_seconds,
+        )
+        queued = True
+
+    return {"ok": True, "queued": queued, "message_id": message_id, "delay_seconds": app_settings.message_buffer_seconds}
+
+
+@router.delete("/lab/test-users/{lead_pk}", status_code=204)
+def lab_delete_test_user(lead_pk: int, db: Session = Depends(get_db)) -> None:
+    lead = _test_lead_or_404(db, lead_pk)
+    client_id = lead.client_id
+
+    # На leads ссылаются десять таблиц, ни одна не объявлена ON DELETE CASCADE,
+    # и между собой они тоже связаны: training_examples смотрит на
+    # approval_requests, а message_buffer и messages — на conversations.
+    # Поэтому порядок строгий: сначала листья графа, потом корни.
+    # Вместе с лидом уходят и его строки action_logs — история в терминале
+    # лаборатории по этому тестовому клиенту тоже исчезнет.
+    try:
+        for model in (
+            TrainingExample,                     # -> approval_requests, leads
+            MessageBuffer, Message,              # -> conversations, leads
+            ApprovalRequest,                     # -> leads
+            AIUsage, AIExtractedFields, ClientMemory, ConsultationSlot, ActionLog,
+            Conversation,                        # -> leads
+        ):
+            db.query(model).filter(model.lead_id == lead.id).delete(synchronize_session=False)
+
+        db.delete(lead)
+        db.flush()
+
+        # Клиент у тестового лида всегда свой, но проверяем — вдруг переиспользовали.
+        if client_id and not db.scalar(select(func.count(Lead.id)).where(Lead.client_id == client_id)):
+            client = db.get(Client, client_id)
+            if client:
+                db.delete(client)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        _log.error("lab_delete_test_user failed lead_pk=%s: %s", lead_pk, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"delete failed: {exc}") from exc
 
 
 class LabEditReplyRequest(BaseModel):

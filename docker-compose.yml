@@ -1,13 +1,15 @@
+name: demi-bot
+
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-demi_results}
       POSTGRES_USER: ${POSTGRES_USER:-demi}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-demi} -d ${POSTGRES_DB:-demi_results}"]
       interval: 10s
@@ -37,7 +39,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8001:8000"
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers"
@@ -48,6 +50,7 @@ services:
       retries: 5
 
   worker:
+    profiles: ["active-bot"]
     build:
       context: ./backend
     restart: unless-stopped
@@ -58,6 +61,7 @@ services:
     command: celery -A app.tasks.celery_app.celery_app worker --loglevel=INFO --concurrency=2
 
   beat:
+    profiles: ["active-bot"]
     build:
       context: ./backend
     restart: unless-stopped
@@ -68,6 +72,7 @@ services:
     command: celery -A app.tasks.celery_app.celery_app beat --loglevel=INFO
 
   frontend:
+    profiles: ["legacy-admin"]
     build:
       context: ./frontend
       args:
@@ -83,10 +88,10 @@ services:
       NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3001:3000"
 
   backup:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     depends_on:
       postgres:
@@ -101,9 +106,10 @@ services:
       - ./backups:/backups
     # Dump every 24h, gzip, delete files older than BACKUP_KEEP_DAYS
     command: >
-      sh -c 'while true; do
+      sh -c 'umask 077; while true; do
         ts=$$(date +%Y-%m-%d_%H-%M);
-        pg_dump -Fc -f /backups/demi_$$ts.dump && echo "backup done: demi_$$ts.dump";
+        file=/backups/demi_$$ts.dump;
+        pg_dump -Fc -f "$$file" && chown 1001:1001 "$$file" && chmod 600 "$$file" && echo "backup done: demi_$$ts.dump";
         find /backups -name "demi_*.dump" -mtime +$$BACKUP_KEEP_DAYS -delete;
         sleep 86400;
       done'

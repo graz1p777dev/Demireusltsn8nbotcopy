@@ -12,21 +12,30 @@ celery_app.conf.update(
     enable_utc=True,
     task_acks_late=True,
     worker_prefetch_multiplier=1,
+    # Часы в crontab() ниже — по timezone выше (Asia/Bishkek), а не по UTC:
+    # beat сверяется с app.timezone, а enable_utc влияет только на то, в каком
+    # виде метки времени едут внутри сообщений брокера.
     beat_schedule={
-        # 10:00 Bishkek (UTC+6) = 04:00 UTC
+        # 10:00 Bishkek
         "daily-consultation-reminders": {
             "task": "app.tasks.reminders.send_daily_consultation_reminders",
-            "schedule": crontab(hour=4, minute=0),
+            "schedule": crontab(hour=10, minute=0),
         },
         # Every 30 min — check who came
         "check-consultation-results": {
             "task": "app.tasks.reminders.check_consultation_results",
             "schedule": crontab(minute="*/30"),
         },
-        # Every 5 min — remind managers about overdue pending approvals
-        "check-overdue-approvals": {
-            "task": "app.tasks.reminders.check_overdue_approvals",
+        # Every 5 min — CRM notification for consultations starting within 30 min.
+        # Bounded window + per-row idempotency flag, see task docstring.
+        "check-upcoming-consultations": {
+            "task": "app.tasks.reminders.check_upcoming_consultations",
             "schedule": crontab(minute="*/5"),
+        },
+        # 09:00 Bishkek — одна сводка в день по клиентам, ждущим ответа.
+        "daily-waiting-clients": {
+            "task": "app.tasks.reminders.send_waiting_clients_digest",
+            "schedule": crontab(hour=9, minute=0),
         },
     },
 )

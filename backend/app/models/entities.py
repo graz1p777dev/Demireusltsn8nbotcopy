@@ -11,6 +11,7 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -55,6 +56,9 @@ class Lead(Base, TimestampMixin):
     contact_id: Mapped[str | None] = mapped_column(String(128))
     status_id: Mapped[int | None] = mapped_column(BigInteger)
     ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Лид из AI-лаборатории: пайплайн отрабатывает целиком, но наружу
+    # (amoCRM, Google Sheets) ничего не уходит. См. _is_test в pipeline.py.
+    is_test: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     client: Mapped[Client | None] = relationship()
 
@@ -182,6 +186,7 @@ class ApprovalRequest(Base):
     conversation_summary: Mapped[str | None] = mapped_column(Text)
     client_message_translation: Mapped[str | None] = mapped_column(Text)
     ai_reply_translation: Mapped[str | None] = mapped_column(Text)
+    ai_reasoning: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -295,3 +300,4 @@ class ConsultationReminder(Base, TimestampMixin):
     lead_id_amo: Mapped[str | None] = mapped_column(String(128))
     telegram_message_ids: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    notify_30min_sent: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))

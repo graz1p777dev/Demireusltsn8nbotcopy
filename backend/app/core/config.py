@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str = ""
     public_backend_url: str = ""
     frontend_url: str = "https://demiresults.alihan-torebekov.kg"
+    # Пусто по умолчанию → crm_notify.notify() тихо ничего не делает.
+    crm_notify_url: str = "https://demiresults.alihan-torebekov.kg/api/internal/notify"
+    crm_notify_token: str = ""
     amocrm_status_on_approve: int | None = None
     amocrm_status_on_edit: int | None = None
     amocrm_status_on_reject: int | None = None
