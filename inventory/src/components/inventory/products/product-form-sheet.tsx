@@ -44,13 +44,6 @@ function FormSectionTitle({ children }: { children: React.ReactNode }) {
   return <p className="mb-3.5 text-sm font-bold text-foreground">{children}</p>
 }
 
-function comingSoon() {
-  toast("Скоро будет доступно")
-}
-
-// Тип товара (Товар/Услуга/Комплект) в CloudShop определяет поведение остатков —
-// у нас пока есть только один тип ("Товар"), поэтому карточки Услуга/Комплект
-// показаны как визуальная заглушка и не переключают форму.
 const PRODUCT_TYPE_CARDS = [
   {
     key: "product",
@@ -69,6 +62,14 @@ const PRODUCT_TYPE_CARDS = [
   },
 ] as const
 
+type ProductType = (typeof PRODUCT_TYPE_CARDS)[number]["key"]
+
+function onlyNumber(value: string): string {
+  const normalized = value.replace(",", ".").replace(/[^0-9.]/g, "")
+  const [whole, ...fraction] = normalized.split(".")
+  return fraction.length > 0 ? `${whole}.${fraction.join("")}` : whole
+}
+
 function CurrencyInput({
   id,
   value,
@@ -84,13 +85,14 @@ function CurrencyInput({
     <div className="relative">
       <Input
         id={id}
-        type="number"
+        type="text"
+        inputMode="decimal"
         min={0}
         step="0.01"
         className="pr-7 text-right font-mono"
         value={value}
         disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(onlyNumber(e.target.value))}
       />
       <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-xs text-muted-foreground">
         ₽
@@ -112,6 +114,16 @@ export function ProductFormSheet({
   const [name, setName] = useState(product?.name ?? "")
   const [sku, setSku] = useState(product?.sku ?? "")
   const [barcode, setBarcode] = useState(product?.barcode ?? "")
+  const [productType, setProductType] = useState<ProductType>(product?.product_type ?? "product")
+  const [gtin, setGtin] = useState(product?.gtin ?? "")
+  const [height, setHeight] = useState(product?.height_cm?.toString() ?? "")
+  const [width, setWidth] = useState(product?.width_cm?.toString() ?? "")
+  const [depth, setDepth] = useState(product?.depth_cm?.toString() ?? "")
+  const [weight, setWeight] = useState(product?.weight_kg?.toString() ?? "")
+  const [description, setDescription] = useState(product?.description ?? "")
+  const [country, setCountry] = useState(product?.country ?? "")
+  const [isWeighted, setIsWeighted] = useState(product?.is_weighted ?? false)
+  const [isFreePrice, setIsFreePrice] = useState(product?.is_free_price ?? false)
   const [categoryId, setCategoryId] = useState<string | null>(product?.category_id ?? null)
   const [unit, setUnit] = useState<string>(product?.unit ?? UNITS[0])
   const [costPrice, setCostPrice] = useState(String(product?.cost_price ?? 0))
@@ -149,12 +161,26 @@ export function ProductFormSheet({
     setImagePreview(file ? URL.createObjectURL(file) : (product?.image_url ?? null))
   }
 
+  function generateBarcode() {
+    const prefix = "200"
+    const body = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10)).join("")
+    const digits = `${prefix}${body}`.split("").map(Number)
+    const sum = digits.reduce((total, digit, index) => total + digit * (index % 2 === 0 ? 1 : 3), 0)
+    setBarcode(`${prefix}${body}${(10 - (sum % 10)) % 10}`)
+  }
+
   function handleSubmit() {
     setError(null)
 
     if (!name.trim()) return setError("Наименование обязательно")
     if (!sku.trim()) return setError("Артикул обязателен")
-    if (initialStockEnabled && !isEdit) {
+    if (Number(discountPercent || 0) > 100) {
+      const message = "Скидка не может быть больше 100%"
+      setError(message)
+      toast.error(message)
+      return
+    }
+    if (productType === "product" && initialStockEnabled && !isEdit) {
       if (!initialStockWarehouseId) return setError("Выберите склад для начального остатка")
       if (!(Number(initialStockQuantity) > 0)) {
         return setError("Укажите количество начального остатка больше нуля")
@@ -171,9 +197,19 @@ export function ProductFormSheet({
     fd.set("retail_price", retailPrice || "0")
     fd.set("discount_percent", discountPercent || "0")
     fd.set("min_stock_level", minStockLevel || "0")
+    fd.set("product_type", productType)
+    fd.set("gtin", gtin)
+    fd.set("description", description)
+    fd.set("country", country)
+    fd.set("height_cm", height)
+    fd.set("width_cm", width)
+    fd.set("depth_cm", depth)
+    fd.set("weight_kg", weight)
+    fd.set("is_weighted", String(isWeighted))
+    fd.set("is_free_price", String(isFreePrice))
     if (imageFile) fd.set("image", imageFile)
 
-    if (!isEdit && initialStockEnabled) {
+    if (!isEdit && productType === "product" && initialStockEnabled) {
       fd.set("initial_stock_enabled", "on")
       fd.set("initial_stock_quantity", initialStockQuantity)
       fd.set("initial_stock_warehouse_id", initialStockWarehouseId ?? "")
@@ -183,8 +219,10 @@ export function ProductFormSheet({
       const result = isEdit ? await updateProduct(product!.id, fd) : await createProduct(fd)
       if (!result.success) {
         setError(result.error)
+        toast.error(result.error)
         return
       }
+      toast.success(isEdit ? "Товар сохранён" : "Товар создан")
       onSaved()
       onOpenChange(false)
     })
@@ -193,10 +231,10 @@ export function ProductFormSheet({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
-        className="w-full gap-0 data-[side=right]:sm:max-w-[960px]"
+        className="w-full gap-0 p-0 data-[side=right]:sm:max-w-[960px]"
         showCloseButton={false}
       >
-        <SheetHeader className="flex-row items-center gap-3.5 border-b border-border py-3.5">
+        <SheetHeader className="flex-row shrink-0 items-center gap-3.5 border-b border-border py-3.5">
           <SheetTitle className="flex-1 text-[17px]">{title}</SheetTitle>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
             Отмена
@@ -216,15 +254,19 @@ export function ProductFormSheet({
           </Button>
         </SheetHeader>
 
-        <div className="flex flex-col gap-3.5 overflow-y-auto p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          <div className="flex flex-col gap-3.5 pb-5">
           <div className="grid grid-cols-3 gap-3">
             {PRODUCT_TYPE_CARDS.map((t) => {
-              const selected = t.key === "product"
+              const selected = t.key === productType
               return (
                 <button
                   key={t.key}
                   type="button"
-                  onClick={selected ? undefined : comingSoon}
+                  onClick={() => {
+                    setProductType(t.key)
+                    if (t.key !== "product") setInitialStockEnabled(false)
+                  }}
                   className={cn(
                     "flex flex-col items-center gap-1 rounded-lg border p-4 text-center transition-colors",
                     selected
@@ -272,7 +314,7 @@ export function ProductFormSheet({
                     <Label htmlFor="product-barcode">Штрих-код</Label>
                     <button
                       type="button"
-                      onClick={comingSoon}
+                      onClick={generateBarcode}
                       className="text-xs font-medium text-primary hover:underline"
                     >
                       Сгенерировать
@@ -298,7 +340,14 @@ export function ProductFormSheet({
 
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="product-gtin">GTIN</Label>
-                  <Input id="product-gtin" className="font-mono" placeholder="Введите GTIN" disabled />
+                  <Input
+                    id="product-gtin"
+                    className="font-mono"
+                    inputMode="numeric"
+                    placeholder="Введите GTIN"
+                    value={gtin}
+                    onChange={(e) => setGtin(e.target.value.replace(/\D/g, ""))}
+                  />
                 </div>
 
                 <div className="col-span-2 flex flex-col gap-1.5">
@@ -365,15 +414,15 @@ export function ProductFormSheet({
                       for= (или обёрнутому вокруг него), триггерит "клик снаружи"
                       и закрывает панель.
                     */}
-                    <Label className="text-muted-foreground" onClick={comingSoon}>
+                    <Label className="text-muted-foreground">
                       Весовой товар
                     </Label>
-                    <Switch checked={false} disabled />
+                    <Switch checked={isWeighted} onCheckedChange={(checked) => setIsWeighted(!!checked)} />
                   </div>
                 </div>
 
                 <div className="col-span-3">
-                  <Button variant="outline" size="sm" className="gap-1.5" onClick={comingSoon}>
+                  <Button variant="outline" size="sm" className="gap-1.5" onClick={() => toast("Упаковки будут добавлены после сохранения товара")}>
                     <PackagePlus className="size-3.5" />
                     Добавить упаковку
                   </Button>
@@ -389,30 +438,30 @@ export function ProductFormSheet({
               <div className="grid grid-cols-3 gap-3">
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="product-height">Высота, см</Label>
-                  <Input id="product-height" type="number" className="text-right font-mono" disabled />
+                  <Input id="product-height" type="text" inputMode="decimal" className="text-right font-mono" value={height} onChange={(e) => setHeight(onlyNumber(e.target.value))} />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="product-width">Ширина, см</Label>
-                  <Input id="product-width" type="number" className="text-right font-mono" disabled />
+                  <Input id="product-width" type="text" inputMode="decimal" className="text-right font-mono" value={width} onChange={(e) => setWidth(onlyNumber(e.target.value))} />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="product-depth">Глубина, см</Label>
-                  <Input id="product-depth" type="number" className="text-right font-mono" disabled />
+                  <Input id="product-depth" type="text" inputMode="decimal" className="text-right font-mono" value={depth} onChange={(e) => setDepth(onlyNumber(e.target.value))} />
                 </div>
 
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="product-weight">Фактический вес, кг</Label>
-                  <Input id="product-weight" type="number" className="text-right font-mono" disabled />
+                  <Input id="product-weight" type="text" inputMode="decimal" className="text-right font-mono" value={weight} onChange={(e) => setWeight(onlyNumber(e.target.value))} />
                 </div>
 
                 <div className="col-span-3 flex flex-col gap-1.5">
                   <Label htmlFor="product-description">Описание</Label>
-                  <Textarea id="product-description" rows={3} disabled />
+                  <Textarea id="product-description" rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
                 </div>
 
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="product-country">Страна</Label>
-                  <Input id="product-country" placeholder="Введите название страны" disabled />
+                  <Input id="product-country" placeholder="Введите название страны" value={country} onChange={(e) => setCountry(e.target.value)} />
                 </div>
               </div>
             </CardContent>
@@ -431,12 +480,11 @@ export function ProductFormSheet({
                   <Label htmlFor="product-markup">Наценка, %</Label>
                   <Input
                     id="product-markup"
-                    type="number"
-                    min={0}
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     className="text-right font-mono"
                     value={markupPercent}
-                    onChange={(e) => setMarkupPercent(e.target.value)}
+                    onChange={(e) => setMarkupPercent(onlyNumber(e.target.value))}
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
@@ -447,21 +495,19 @@ export function ProductFormSheet({
                   <Label htmlFor="product-discount">Скидка, %</Label>
                   <Input
                     id="product-discount"
-                    type="number"
-                    min={0}
-                    max={100}
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     className="text-right font-mono"
                     value={discountPercent}
-                    onChange={(e) => setDiscountPercent(e.target.value)}
+                    onChange={(e) => setDiscountPercent(onlyNumber(e.target.value))}
                   />
                 </div>
 
                 <div className="col-span-3 flex items-center gap-2 text-[13px]">
-                  <Label className="text-muted-foreground" onClick={comingSoon}>
+                  <Label className="text-muted-foreground">
                     Товар по свободной цене
                   </Label>
-                  <Switch checked={false} disabled />
+                  <Switch checked={isFreePrice} onCheckedChange={(checked) => setIsFreePrice(!!checked)} />
                   <span className="flex items-center gap-1 text-xs text-muted-foreground">
                     <Sparkles className="size-3" />
                     Кассир при продаже может редактировать цену
@@ -480,16 +526,15 @@ export function ProductFormSheet({
                   <Label htmlFor="product-min-stock">Минимальный остаток</Label>
                   <Input
                     id="product-min-stock"
-                    type="number"
-                    min={0}
-                    step="1"
+                    type="text"
+                    inputMode="numeric"
                     className="text-right font-mono"
                     value={minStockLevel}
-                    onChange={(e) => setMinStockLevel(e.target.value)}
+                    onChange={(e) => setMinStockLevel(e.target.value.replace(/\D/g, ""))}
                   />
                 </div>
 
-                {!isEdit && (
+                {!isEdit && productType === "product" && (
                   <div className="col-span-2 flex items-center gap-2 self-end pb-2 text-[13px]">
                     <Label className="cursor-pointer" onClick={() => setInitialStockEnabled((v) => !v)}>
                       Ввести начальные остатки
@@ -507,12 +552,11 @@ export function ProductFormSheet({
                       <Label htmlFor="initial-stock-qty">Количество</Label>
                       <Input
                         id="initial-stock-qty"
-                        type="number"
-                        min={0}
-                        step="0.001"
+                        type="text"
+                        inputMode="decimal"
                         className="text-right font-mono"
                         value={initialStockQuantity}
-                        onChange={(e) => setInitialStockQuantity(e.target.value)}
+                        onChange={(e) => setInitialStockQuantity(onlyNumber(e.target.value))}
                       />
                     </div>
                     <div className="col-span-2 flex flex-col gap-1.5">
@@ -544,6 +588,7 @@ export function ProductFormSheet({
           </Card>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
+          </div>
         </div>
       </SheetContent>
 

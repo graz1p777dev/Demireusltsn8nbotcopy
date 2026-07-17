@@ -957,6 +957,18 @@ export type Database = {
         }
         Relationships: []
       }
+      inventory_accounts: {
+        Row: { account_type: string; balance: number; color: string; created_at: string; id: string; is_active: boolean; name: string; updated_at: string }
+        Insert: { account_type: string; balance?: number; color?: string; created_at?: string; id?: string; is_active?: boolean; name: string; updated_at?: string }
+        Update: { account_type?: string; balance?: number; color?: string; created_at?: string; id?: string; is_active?: boolean; name?: string; updated_at?: string }
+        Relationships: []
+      }
+      inventory_company_settings: {
+        Row: { address: string | null; currency: string; director: string | null; id: boolean; inn: string | null; logo_url: string | null; name: string; phone: string | null; timezone: string; updated_at: string }
+        Insert: { address?: string | null; currency?: string; director?: string | null; id?: boolean; inn?: string | null; logo_url?: string | null; name?: string; phone?: string | null; timezone?: string; updated_at?: string }
+        Update: { address?: string | null; currency?: string; director?: string | null; id?: boolean; inn?: string | null; logo_url?: string | null; name?: string; phone?: string | null; timezone?: string; updated_at?: string }
+        Relationships: []
+      }
       inventory_categories: {
         Row: {
           created_at: string
@@ -1118,6 +1130,16 @@ export type Database = {
           discount_percent: number
           id: string
           image_url: string | null
+          product_type: string
+          gtin: string | null
+          description: string | null
+          country: string | null
+          height_cm: number | null
+          width_cm: number | null
+          depth_cm: number | null
+          weight_kg: number | null
+          is_weighted: boolean
+          is_free_price: boolean
           is_active: boolean
           min_stock_level: number
           name: string
@@ -1136,6 +1158,16 @@ export type Database = {
           discount_percent?: number
           id?: string
           image_url?: string | null
+          product_type?: string
+          gtin?: string | null
+          description?: string | null
+          country?: string | null
+          height_cm?: number | null
+          width_cm?: number | null
+          depth_cm?: number | null
+          weight_kg?: number | null
+          is_weighted?: boolean
+          is_free_price?: boolean
           is_active?: boolean
           min_stock_level?: number
           name: string
@@ -1154,6 +1186,16 @@ export type Database = {
           discount_percent?: number
           id?: string
           image_url?: string | null
+          product_type?: string
+          gtin?: string | null
+          description?: string | null
+          country?: string | null
+          height_cm?: number | null
+          width_cm?: number | null
+          depth_cm?: number | null
+          weight_kg?: number | null
+          is_weighted?: boolean
+          is_free_price?: boolean
           is_active?: boolean
           min_stock_level?: number
           name?: string
@@ -2173,6 +2215,90 @@ export type Database = {
         }
         Relationships: []
       }
+      shop_order_items: {
+        Row: {
+          id: string
+          line_total: number
+          order_id: string
+          product_id: string
+          product_name: string
+          quantity: number
+          unit_price: number
+        }
+        Insert: {
+          id?: string
+          line_total: number
+          order_id: string
+          product_id: string
+          product_name: string
+          quantity: number
+          unit_price: number
+        }
+        Update: {
+          id?: string
+          line_total?: number
+          order_id?: string
+          product_id?: string
+          product_name?: string
+          quantity?: number
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "shop_order_items_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "shop_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "shop_order_items_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_products"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      shop_orders: {
+        Row: {
+          address: string | null
+          comment: string | null
+          created_at: string
+          customer_name: string
+          id: string
+          order_number: number
+          phone: string
+          status: string
+          total_amount: number
+          updated_at: string
+        }
+        Insert: {
+          address?: string | null
+          comment?: string | null
+          created_at?: string
+          customer_name: string
+          id?: string
+          order_number?: never
+          phone: string
+          status?: string
+          total_amount?: number
+          updated_at?: string
+        }
+        Update: {
+          address?: string | null
+          comment?: string | null
+          created_at?: string
+          customer_name?: string
+          id?: string
+          order_number?: never
+          phone?: string
+          status?: string
+          total_amount?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       work_schedules: {
         Row: {
           created_at: string
@@ -2216,6 +2342,19 @@ export type Database = {
         Args: { p_employee_id: string; p_month: number; p_year: number }
         Returns: undefined
       }
+      create_shop_order: {
+        Args: {
+          p_address: string
+          p_comment: string
+          p_customer_name: string
+          p_items: Json
+          p_phone: string
+        }
+        Returns: {
+          order_number: number
+          total_amount: number
+        }[]
+      }
       generate_monthly_schedule: {
         Args: { p_employee_id: string; p_month: number; p_year: number }
         Returns: undefined
@@ -2224,6 +2363,21 @@ export type Database = {
       get_my_employee_id: { Args: never; Returns: string }
       get_my_permission_level: { Args: never; Returns: string }
       get_my_role: { Args: never; Returns: string }
+      get_shop_products: {
+        Args: never
+        Returns: {
+          country: string | null
+          description: string | null
+          discount_percent: number
+          id: string
+          image_url: string | null
+          name: string
+          retail_price: number
+          sku: string
+          stock: number
+          unit: string
+        }[]
+      }
       inventory_apply_stock_change: {
         Args: {
           p_document_id: string
