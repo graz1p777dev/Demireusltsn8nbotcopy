@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import admin, health, slots, webhooks
 from app.api import auth as auth_router
+from app.api import copilot as copilot_router
 from app.api import crm_users as crm_users_router
 from app.core.admin_auth import admin_auth_middleware
 from app.core.config import settings
@@ -37,3 +38,4 @@ app.include_router(admin.router)
 app.include_router(slots.router)
 app.include_router(auth_router.router)
 app.include_router(crm_users_router.router)
+app.include_router(copilot_router.router)
