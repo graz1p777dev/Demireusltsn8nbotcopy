@@ -1,15 +1,15 @@
 """Add AI Copilot tables (conversations, messages, pending actions) and expenses
 
-Revision ID: 0008_copilot
-Revises: 0007_blacklist
-Create Date: 2026-07-17
+Revision ID: 0011_copilot
+Revises: 0010_approval_ai_reasoning
+Create Date: 2026-07-18
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "0008_copilot"
-down_revision = "0007_blacklist"
+revision = "0011_copilot"
+down_revision = "0010_approval_ai_reasoning"
 branch_labels = None
 depends_on = None
 
