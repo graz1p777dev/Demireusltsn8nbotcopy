@@ -1,3 +1,4 @@
+import { jwtVerify } from "jose";
 import { NextRequest, NextResponse } from "next/server";
 
 const BACKEND_API_URL = process.env.BACKEND_API_URL || "http://localhost:8000";
@@ -19,6 +20,23 @@ async function proxy(request: NextRequest, context: RouteContext) {
   headers.delete("host");
   if (BACKEND_ADMIN_API_KEY) {
     headers.set("X-Admin-API-Key", BACKEND_ADMIN_API_KEY);
+  }
+
+  // Copilot needs to know who's asking — decode the crm_token cookie here
+  // (server-side, same secret/pattern as middleware.ts) and forward identity
+  // as headers. No other backend route reads these; safe no-op elsewhere.
+  const token = request.cookies.get("crm_token")?.value;
+  if (token) {
+    try {
+      const secret = new TextEncoder().encode(process.env.JWT_SECRET || "change-me-in-production");
+      const { payload } = await jwtVerify(token, secret);
+      if (typeof payload.sub === "string") {
+        headers.set("X-User-Name", payload.sub);
+        headers.set("X-User-Is-Admin", payload.is_admin ? "true" : "false");
+      }
+    } catch {
+      // invalid/expired token — leave identity headers unset, copilot will 401
+    }
   }
 
   const response = await fetch(backendUrl(path, request.nextUrl.search), {
