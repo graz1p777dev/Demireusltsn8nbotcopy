@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.copilot_auth import CurrentUser
-from app.data.copilot_kb import search_kb
+from app.data.copilot_kb import search_kb_scored
 from app.models.entities import CopilotMessage, CopilotPendingAction
 from app.services import copilot_tools
 
@@ -99,9 +99,9 @@ def handle_message(
     user_text: str,
     page_context: dict | None = None,
 ) -> dict:
-    kb_hits = search_kb(user_text, top_k=1)
-    if kb_hits and _kb_score_ok(user_text, kb_hits[0]):
-        entry = kb_hits[0]
+    kb_hits = search_kb_scored(user_text, top_k=1)
+    if kb_hits and kb_hits[0][0] >= KB_MATCH_THRESHOLD:
+        _, entry = kb_hits[0]
         reply = _answer_from_kb(entry)
         button = _kb_button(entry["key"])
         return {"reply": reply, "buttons": [button] if button else [], "quick_actions": [], "pending_action": None}
@@ -184,12 +184,6 @@ def handle_message(
         pending_action = {"id": action.id, "tool_name": action.tool_name, "payload": action.payload}
 
     return {"reply": reply, "buttons": buttons, "quick_actions": [], "pending_action": pending_action}
-
-
-def _kb_score_ok(query: str, entry: dict) -> bool:
-    q_words = {w for w in query.lower().replace("?", "").split() if len(w) > 2}
-    haystack = " ".join([entry["title"], entry["description"], entry["purpose"]]).lower()
-    return sum(1 for w in q_words if w in haystack) >= KB_MATCH_THRESHOLD
 
 
 def save_message(db: Session, conversation_id: int, role: str, content: str,
