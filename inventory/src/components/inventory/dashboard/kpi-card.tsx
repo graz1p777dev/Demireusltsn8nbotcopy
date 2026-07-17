@@ -1,13 +1,13 @@
-import { HelpCircle, Wallet, ShoppingBag, TrendingUp, Receipt, ArrowUp } from "lucide-react"
+import { HelpCircle, Wallet, ShoppingBag, TrendingUp, Receipt } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
 } from "@/components/ui/tooltip"
-import type { KpiMock } from "@/app/inventory/_data/mock-dashboard"
+import type { DashboardKpi } from "@/app/inventory/dashboard-actions"
 
-const KPI_ICONS: Record<KpiMock["icon"], typeof Wallet> = {
+const KPI_ICONS: Record<DashboardKpi["icon"], typeof Wallet> = {
   wallet: Wallet,
   "shopping-bag": ShoppingBag,
   "trending-up": TrendingUp,
@@ -16,14 +16,14 @@ const KPI_ICONS: Record<KpiMock["icon"], typeof Wallet> = {
 
 // Цветной квадрат под иконку — по одному акценту на метрику, чтобы карточки
 // не сливались в одну сплошную заливку.
-const KPI_TONE: Record<KpiMock["icon"], { fg: string; bg: string }> = {
+const KPI_TONE: Record<DashboardKpi["icon"], { fg: string; bg: string }> = {
   wallet: { fg: "#12a05f", bg: "#e3f9ee" },
   "shopping-bag": { fg: "#2563eb", bg: "#e5edff" },
   "trending-up": { fg: "#db2777", bg: "#fde8f3" },
   receipt: { fg: "#d97706", bg: "#fff2df" },
 }
 
-export function KpiCard({ label, value, hint, highlight, icon, delta }: KpiMock) {
+export function KpiCard({ label, value, hint, highlight, icon }: DashboardKpi) {
   const Icon = KPI_ICONS[icon]
   const tone = KPI_TONE[icon]
 
@@ -37,18 +37,6 @@ export function KpiCard({ label, value, hint, highlight, icon, delta }: KpiMock)
           >
             <Icon className="size-4" />
           </div>
-          {delta && (
-            <span
-              className={
-                delta.positive
-                  ? "flex items-center gap-0.5 text-[11px] font-bold text-[#12a05f]"
-                  : "flex items-center gap-0.5 text-[11px] font-bold text-destructive"
-              }
-            >
-              <ArrowUp className={delta.positive ? "size-3" : "size-3 rotate-180"} />
-              {delta.value}
-            </span>
-          )}
         </div>
 
         <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground/60">

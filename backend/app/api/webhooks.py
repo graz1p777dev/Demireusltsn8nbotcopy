@@ -66,6 +66,30 @@ def _load_templates(db) -> list[dict]:
         return []
 
 
+def _refresh_purchase_card(db, approval: ApprovalRequest, manager_id: str) -> None:
+    """Redraw a 🛒 ХОЧЕТ КУПИТЬ card after the manager wrote the reply.
+
+    The reply is stored but NOT sent — the refreshed card now shows «✅ Принять»,
+    so the manager confirms before the client sees anything.
+    """
+    lead = db.get(Lead, approval.lead_id)
+    if not lead:
+        return
+    db.refresh(approval)
+    has_templates = bool(_load_templates(db))
+    result = telegram.edit_approval_card(approval, lead, has_templates=has_templates)
+    if result.get("skipped") or result.get("_all_failed") or result.get("error"):
+        _log.error(
+            "edit_approval_card failed after purchase edit approval_id=%s msg_id=%s result=%s",
+            approval.id, approval.telegram_message_id, result,
+        )
+        telegram.send_text(
+            manager_id,
+            f"⚠️ Не удалось обновить карточку №{approval.id:07d}, но ответ сохранён. "
+            "Нажмите «Принять» — он будет отправлен клиенту.",
+        )
+
+
 def _load_db_manager_ids(db) -> set[str]:
     try:
         row = db.scalar(select(Setting).where(Setting.key == "telegram_managers"))
@@ -100,34 +124,30 @@ async def amocrm_webhook(
         stored = store_outgoing_message(db, incoming)
         return {"ok": True, "queued": False, "reason": "outgoing_consultant", "stored": stored}
 
-    # Handle voice messages: transcribe and language-filter before processing
+    # Handle voice messages: transcribe with Whisper and let them through the
+    # normal pipeline like any text message.
+    #
+    # This used to auto-reply to the client and drop the message whenever
+    # Whisper's own language guess wasn't "ru"/"ky" — but that guess is
+    # unreliable for Kyrgyz (a low-resource language for Whisper) and the
+    # auto-reply bypassed manager approval entirely, sending a message to a
+    # live client with no human in the loop. Language handling belongs to
+    # detect_language() on the transcript further down the pipeline, which
+    # already tells generate_reply to answer in the client's language — it
+    # must never gate or auto-send here.
+    #
+    # The `[voice] <url>` prefix is kept in front of the transcript (same
+    # convention amoCRM/telegram.py already use for `[picture] <url>`) so the
+    # Telegram approval card can render a clickable "listen" link; AI calls
+    # strip it back out via strip_voice_marker().
     _VOICE_TYPES = {"voice", "audio"}
     _voice_url = incoming.attachment_link or incoming.media or None
     if incoming.attachment_type in _VOICE_TYPES and _voice_url:
         try:
-            transcribed, lang = transcribe_voice(_voice_url)
+            transcribed, _lang = transcribe_voice(_voice_url)
         except Exception:
-            transcribed, lang = "", "ru"
-
-        if transcribed and lang not in {"ru", "ky"}:
-            # Unsupported language — reply to client and skip AI pipeline
-            lead, _conv, _ = upsert_incoming(db, incoming)
-            try:
-                session = amocrm.create_chat_session()
-                amocrm.send_chat_message(
-                    session,
-                    lead.chat_id or "",
-                    lead.amocrm_lead_id,
-                    lead.contact_id,
-                    "Голосовые сообщения принимаются только на русском или кыргызском языке. "
-                    "Пожалуйста, напишите текстом или отправьте голосовое на русском / кыргызском.",
-                )
-            except Exception:
-                pass
-            return {"ok": True, "queued": False, "reason": "voice_lang_unsupported", "lang": lang}
-
-        if transcribed:
-            incoming.text = f"[Голосовое сообщение]: {transcribed}"
+            transcribed = ""
+        incoming.text = f"[voice] {_voice_url} {transcribed}".strip()
 
     lead, _conversation, is_new = upsert_incoming(db, incoming)
     if is_new and lead.ai_enabled:
@@ -191,11 +211,32 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             if not lead:
                 telegram.answer_callback(callback_id, "Лид не найден")
                 return {"ok": False, "error": "lead_not_found"}
+            # Тестового лида в amoCRM нет: кнопку мы прячем, но callback мог
+            # прилететь со старой карточки, а patch по чужому id опасен.
+            if telegram.is_test_lead(lead):
+                telegram.answer_callback(callback_id, "Тестовый лид — этапа в amoCRM нет")
+                return {"ok": False, "error": "test_lead"}
             try:
                 amocrm.patch_lead_status(lead.amocrm_lead_id, int(stage_id_str))
                 telegram.answer_callback(callback_id, "✅ Этап изменён")
             except Exception:
                 telegram.answer_callback(callback_id, "Ошибка при смене этапа")
+            return {"ok": True, "action": action}
+
+        # "waiting:list" не несёт approval_id — обрабатываем до int(raw_id) ниже.
+        if action == "waiting":
+            from app.tasks.reminders import collect_waiting_clients
+
+            # Список собирается сейчас, а не в 09:00, поэтому он всегда свежий.
+            text_out = telegram.waiting_clients_list(collect_waiting_clients(db))
+            # Уходит в личку нажавшему: телефоны клиентов не место в общем чате.
+            try:
+                telegram.send_text(manager_id, text_out)
+            except Exception as exc:
+                _log.warning("waiting list to manager_id=%s failed: %s", manager_id, exc)
+                telegram.answer_callback(callback_id, "Откройте личный чат с ботом и нажмите /start")
+                return {"ok": False, "error": "dm_unavailable"}
+            telegram.answer_callback(callback_id, "Отправил в личные сообщения")
             return {"ok": True, "action": action}
 
         approval_id = int(raw_id)
@@ -206,6 +247,9 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             if not approval or not lead:
                 telegram.answer_callback(callback_id, "Лид не найден")
                 return {"ok": False, "error": "lead_not_found"}
+            if telegram.is_test_lead(lead):
+                telegram.answer_callback(callback_id, "Тестовый лид — этапа в amoCRM нет")
+                return {"ok": False, "error": "test_lead"}
             pipeline_id = approval.amocrm_pipeline_id
             if not pipeline_id:
                 telegram.answer_callback(callback_id, "Pipeline не определён")
@@ -411,20 +455,29 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             if not approval:
                 telegram.answer_callback(callback_id, "Запрос не найден")
                 return {"ok": False, "error": "approval_not_found"}
-            telegram.answer_callback(callback_id, "Спрашиваю у бота...")
-            from app.services.openai_service import explain_reply
-            from app.tasks.pipeline import save_ai_usage
-            try:
-                result = explain_reply(
-                    approval.client_message or "",
-                    approval.edited_reply or approval.ai_reply or "",
-                    conversation_summary=approval.conversation_summary,
-                )
-                save_ai_usage(db, approval.lead_id, result)
-                explanation = result.content or "Не удалось получить объяснение."
-            except Exception as exc:
-                _log.error("explain_reply failed approval_id=%s: %s", approval_id, exc)
-                explanation = "Ошибка: не удалось получить объяснение."
+            # Reasoning captured live when the reply was generated (see generate_reply) is the
+            # real mechanism, not a guess. Only fall back to asking the model to reconstruct
+            # a reason when nothing was captured (old cards) or the manager rewrote the reply.
+            if approval.ai_reasoning and not approval.edited_reply:
+                telegram.answer_callback(callback_id)
+                explanation = approval.ai_reasoning
+            else:
+                telegram.answer_callback(callback_id, "Спрашиваю у бота...")
+                from app.services.openai_service import explain_reply
+                from app.tasks.pipeline import save_ai_usage
+                try:
+                    result = explain_reply(
+                        approval.client_message or "",
+                        approval.edited_reply or approval.ai_reply or "",
+                        conversation_summary=approval.conversation_summary,
+                    )
+                    save_ai_usage(db, approval.lead_id, result)
+                    explanation = (result.content or "Не удалось получить объяснение.") + (
+                        "\n\n⚠️ Реконструировано задним числом — точная причина не сохранена."
+                    )
+                except Exception as exc:
+                    _log.error("explain_reply failed approval_id=%s: %s", approval_id, exc)
+                    explanation = "Ошибка: не удалось получить объяснение."
             text_out = f"🤖 Почему бот так ответил (№{approval_id:07d}):\n\n{explanation}"
             try:
                 telegram.send_text(callback_chat_id or manager_id, text_out)
@@ -475,7 +528,8 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             return {"ok": True, "action": action}
 
         if lead:
-            telegram.answer_callback(callback_id, telegram.lead_url(lead))
+            target = telegram.crm_chat_url(lead) if telegram.is_test_lead(lead) else telegram.lead_url(lead)
+            telegram.answer_callback(callback_id, target)
         return {"ok": True, "action": action}
 
     if message := update.get("message"):
@@ -545,7 +599,8 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
                     telegram.send_text(manager_id, f"⚠️ Не удалось обновить карточку №{edit_approval_id:07d}, но ответ сохранён. Нажмите «Принять» — правильный ответ будет отправлен клиенту.")
             return {"ok": True, "action": "edited"}
 
-        # Покупка — полный ответ вручную, сразу отправляем клиенту
+        # Покупка — полный ответ вручную. Не отправляем сразу: показываем
+        # менеджеру карточку с его текстом и кнопкой «Принять» для подтверждения.
         purchase_edit_id = pop_purchase_edit_session(db, manager_id)
         if purchase_edit_id and text:
             prompt_mid = pop_edit_prompt_msg(db, manager_id)
@@ -557,10 +612,10 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
                 approval.status = "edited"
                 approval.manager_telegram_id = manager_id
                 db.commit()
-                approve_request(db, purchase_edit_id, manager_id)
+                _refresh_purchase_card(db, approval, manager_id)
             return {"ok": True, "action": "purchase_replied"}
 
-        # Покупка — подстановка в шаблон, сразу отправляем клиенту
+        # Покупка — подстановка в шаблон. Тоже с подтверждением.
         purchase_answer_id = pop_purchase_answer_session(db, manager_id)
         if purchase_answer_id and text:
             prompt_mid = pop_edit_prompt_msg(db, manager_id)
@@ -577,7 +632,7 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
                 approval.status = "edited"
                 approval.manager_telegram_id = manager_id
                 db.commit()
-                approve_request(db, purchase_answer_id, manager_id)
+                _refresh_purchase_card(db, approval, manager_id)
             return {"ok": True, "action": "purchase_answered"}
 
         # Перевод ответа

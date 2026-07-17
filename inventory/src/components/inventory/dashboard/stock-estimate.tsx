@@ -1,8 +1,8 @@
 import { AlertTriangle, PackageX, CircleSlash } from "lucide-react"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import { STOCK_ESTIMATE_MOCK } from "@/app/inventory/_data/mock-dashboard"
-import type { StockWarning } from "@/app/inventory/_data/mock-dashboard"
+import type { DashboardData } from "@/app/inventory/dashboard-actions"
 
+type StockWarning = DashboardData["stock"]["warnings"][number]
 const WARNING_ICONS: Record<StockWarning["icon"], typeof AlertTriangle> = {
   "alert-triangle": AlertTriangle,
   "package-x": PackageX,
@@ -16,8 +16,8 @@ const WARNING_TONE: Record<StockWarning["icon"], string> = {
   "circle-slash": "text-[#a2b4c0]",
 }
 
-export function StockEstimate() {
-  const { warnings, totalQuantity, retailValue, costValue } = STOCK_ESTIMATE_MOCK
+export function StockEstimate({ data }: { data: DashboardData["stock"] }) {
+  const { warnings, totalQuantity, retailValue, costValue } = data
 
   return (
     <Card className="overflow-hidden py-0">
@@ -30,13 +30,10 @@ export function StockEstimate() {
             const Icon = WARNING_ICONS[w.icon]
             return (
               <li key={w.label}>
-                <a
-                  href="#"
-                  className="flex items-center gap-2.5 text-[13px] font-medium text-primary hover:underline"
-                >
+                <span className="flex items-center gap-2.5 text-[13px] font-medium text-primary">
                   <Icon className={`size-[15px] flex-shrink-0 ${WARNING_TONE[w.icon]}`} />
                   {w.label}
-                </a>
+                </span>
               </li>
             )
           })}
@@ -49,11 +46,11 @@ export function StockEstimate() {
           </div>
           <div className="flex items-center justify-between border-b border-border py-2.5 text-[13px]">
             <span className="text-foreground/60">В розничных ценах</span>
-            <span className="font-mono font-semibold">{retailValue}</span>
+            <span className="font-mono font-semibold">{retailValue.toLocaleString("ru-RU")} сом</span>
           </div>
           <div className="flex items-center justify-between py-2.5 text-[13px]">
             <span className="text-foreground/60">По себестоимости</span>
-            <span className="font-mono font-semibold">{costValue}</span>
+            <span className="font-mono font-semibold">{costValue.toLocaleString("ru-RU")} сом</span>
           </div>
         </div>
       </CardContent>

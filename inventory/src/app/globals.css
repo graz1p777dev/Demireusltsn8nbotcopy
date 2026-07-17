@@ -65,33 +65,33 @@ button, [role="button"], a { cursor: pointer; }
 
 :root {
   /* Demi Results brand palette — per design_handoff_demi_results (2026-07-08) */
-  --brand-dark: #191f36;
-  --brand-dark-2: #20273f;
-  --brand-dark-3: #2c3350;
-  --brand-app-bg: #e9ebf2;
-  --brand-surface: #f4f5f9;
-  --brand-violet: #7c5cfc;
-  --brand-violet-2: #6a4df0;
-  --brand-violet-light: #8b6ef7;
-  --brand-violet-tint: #efe9ff;
+  --brand-dark: #0c1f33;
+  --brand-dark-2: #102b43;
+  --brand-dark-3: #173b57;
+  --brand-app-bg: #f4f7f8;
+  --brand-surface: #eaf2f5;
+  --brand-violet: #14708f;
+  --brand-violet-2: #0c4d6c;
+  --brand-violet-light: #2a92b2;
+  --brand-violet-tint: #e2f1f6;
 
   --background: var(--brand-app-bg);
-  --foreground: #22263f;
+  --foreground: #0c2136;
   --card: #ffffff;
-  --card-foreground: #22263f;
+  --card-foreground: #0c2136;
   --popover: #ffffff;
-  --popover-foreground: #22263f;
+  --popover-foreground: #0c2136;
   --primary: var(--brand-violet-2);
   --primary-foreground: #ffffff;
   --secondary: var(--brand-violet-tint);
   --secondary-foreground: var(--brand-violet-2);
-  --muted: #f0f1f6;
-  --muted-foreground: #8a90a6;
+  --muted: #edf3f5;
+  --muted-foreground: #6b7f8d;
   --accent: var(--brand-violet-tint);
   --accent-foreground: var(--brand-violet-2);
   --destructive: #e0526b;
-  --border: #ecedf4;
-  --input: #e6e8f0;
+  --border: #dce7eb;
+  --input: #d8e5e9;
   --ring: var(--brand-violet-2);
   --success: #12a05f;
   --success-foreground: #e3f9ee;
@@ -99,12 +99,12 @@ button, [role="button"], a { cursor: pointer; }
   --warning-foreground: #fff2df;
   --info: #2563eb;
   --info-foreground: #e5edff;
-  --chart-1: #7c5cfc;
+  --chart-1: #0c4d6c;
   --chart-2: #22c88f;
   --chart-3: #f59e0b;
   --chart-4: #38bdf8;
   --chart-5: #f472b6;
-  --chart-bar-dim: #c9bcff;
+  --chart-bar-dim: #a9d2df;
   --radius: 0.6875rem;
   --sidebar: var(--brand-dark);
   --sidebar-foreground: #ffffff;
@@ -112,8 +112,22 @@ button, [role="button"], a { cursor: pointer; }
   --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: var(--brand-dark-2);
   --sidebar-accent-foreground: #ffffff;
-  --sidebar-border: #262d47;
+  --sidebar-border: #17364e;
   --sidebar-ring: var(--brand-violet-2);
+}
+
+@keyframes inventory-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.inventory-page-enter { animation: inventory-enter 180ms ease-out; }
+
+[data-slot="card"] { transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease; }
+[data-slot="card"]:hover { transform: translateY(-1px); box-shadow: 0 10px 22px -18px rgba(12, 77, 108, 0.32); border-color: #b6d6e0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .inventory-page-enter, [data-slot="card"] { animation: none; transition: none; }
 }
 
 @layer base {

@@ -223,6 +223,48 @@ def get_past_consultations_without_result() -> list[dict]:
         return []
 
 
+def get_upcoming_consultations_within(minutes: int) -> list[dict]:
+    """Today's booked consultations starting in (0, minutes] from now.
+
+    Bounded window on both ends — a consultation that already started, or one
+    further out than `minutes`, is simply not in this list. No open-ended
+    "older than X" query here (see reminders.py comment on the 10.07 incident).
+    """
+    if not settings.google_sheets_enabled:
+        return []
+    now = datetime.now(ZoneInfo(settings.timezone))
+    today = now.strftime("%d.%m.%Y")
+    try:
+        ws, rows = _rows_for_date(today)
+        result = []
+        for r in rows:
+            if r.get("Статус", "") not in ("Записан", "Напомнено"):
+                continue
+            time_str = r.get("Время", "")
+            if not time_str:
+                continue
+            try:
+                consult_hour, consult_min = [int(x) for x in time_str.split(":")]
+                consult_start = now.replace(hour=consult_hour, minute=consult_min, second=0, microsecond=0)
+            except ValueError:
+                continue
+            delta_min = (consult_start - now).total_seconds() / 60
+            if not (0 < delta_min <= minutes):
+                continue
+            result.append({
+                "row_number": r["_row"],
+                "sheet_name": ws.title if ws else "",
+                "date": r.get("Дата", ""),
+                "time": r.get("Время", ""),
+                "name": r.get("Имя", ""),
+                "phone": r.get("Телефон", ""),
+                "lead_id": r.get("ID сделки", ""),
+            })
+        return result
+    except Exception:
+        return []
+
+
 # ─── Update helpers ───────────────────────────────────────────────────────────
 
 def mark_reminder_sent(sheet_name: str, row_number: int) -> None:

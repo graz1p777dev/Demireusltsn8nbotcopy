@@ -1,28 +1,32 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useTransition } from "react"
+import { toast } from "sonner"
 import { CreditCard, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { AccountCreateDialog } from "./account-create-dialog"
-import { INITIAL_ACCOUNTS } from "./company-mock-data"
-import type { AccountRow } from "./company-mock-data"
+import { createCompanyAccount, type CompanyAccount } from "@/app/inventory/company/actions"
 
 const NEW_ACCOUNT_COLOR = "#0c4d6c"
 
-function formatMoney(value: number): string {
-  return `${value.toLocaleString("ru-RU")} ₽`
-}
+function formatMoney(value: number): string { return `${value.toLocaleString("ru-RU")} сом` }
+const TYPE_LABELS: Record<CompanyAccount["account_type"], string> = { cash: "Наличные", bank: "Банк", electronic: "Электронный" }
+const TYPE_VALUES: Record<string, CompanyAccount["account_type"]> = { "Наличные": "cash", "Банк": "bank", "Электронный": "electronic" }
 
-export function AccountsPageClient() {
-  const [accounts, setAccounts] = useState<AccountRow[]>(INITIAL_ACCOUNTS)
+export function AccountsPageClient({ initialAccounts }: { initialAccounts: CompanyAccount[] }) {
+  const [accounts, setAccounts] = useState<CompanyAccount[]>(initialAccounts)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [, startTransition] = useTransition()
 
   function handleCreate(fields: { name: string; type: string; balance: number }) {
-    setAccounts((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), name: fields.name, type: fields.type, balance: fields.balance, color: NEW_ACCOUNT_COLOR },
-    ])
+    startTransition(async () => {
+      const result = await createCompanyAccount({ name: fields.name, account_type: TYPE_VALUES[fields.type] ?? "cash", balance: fields.balance, color: NEW_ACCOUNT_COLOR })
+      if (!result.success) { toast.error(result.error); return }
+      setAccounts((prev) => [...prev, result.account])
+      setDialogOpen(false)
+      toast.success("Счёт добавлен")
+    })
   }
 
   return (
@@ -47,7 +51,7 @@ export function AccountsPageClient() {
                 </span>
                 <div className="min-w-0">
                   <p className="truncate text-[13.5px] font-bold">{a.name}</p>
-                  <p className="text-[11.5px] text-muted-foreground">{a.type}</p>
+                  <p className="text-[11.5px] text-muted-foreground">{TYPE_LABELS[a.account_type]}</p>
                 </div>
               </div>
               <div className="mt-3.5 border-t border-border pt-3">
