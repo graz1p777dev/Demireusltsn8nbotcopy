@@ -2,6 +2,7 @@
 answer "how do I use the CRM" questions — never the system prompt or general
 model knowledge. One entry per CRM page.
 """
+import re
 
 KB: list[dict] = [
     {
@@ -50,16 +51,17 @@ KB: list[dict] = [
     },
     {
         "key": "consultations",
-        "title": "Консультации",
+        "title": "Записи (Консультации)",
         "url": "/dashboard/consultations",
-        "description": "Календарь слотов для записи клиентов на консультацию.",
-        "purpose": "Смотреть занятость слотов по дням, вручную бронировать/освобождать/отменять слот.",
-        "buttons": ["Открыть слот", "Освободить слот", "Забронировать"],
-        "actions": ["Создать/изменить статус слота консультации"],
+        "description": "Календарь записей клиентов на консультацию — в боковом меню раздел называется «Записи».",
+        "purpose": "Смотреть занятость слотов по дням, создавать новую запись, вручную бронировать/освобождать/отменять слот.",
+        "buttons": ["Открыть слот", "Освободить слот", "Забронировать", "Новая запись"],
+        "actions": ["Создать новую запись на консультацию", "Изменить статус слота консультации"],
         "permissions": "Доступно всем авторизованным пользователям CRM.",
         "errors": ["«Invalid date or time format» — при ручном вводе даты/времени слота в неверном формате."],
         "faq": [
-            {"q": "Сколько консультаций сегодня?", "a": "Откройте Консультации и посмотрите на слоты со статусом «занято» на сегодняшнюю дату, либо спросите об этом ИИ-помощника."},
+            {"q": "Сколько консультаций сегодня?", "a": "Откройте Записи и посмотрите на слоты со статусом «занято» на сегодняшнюю дату, либо спросите об этом ИИ-помощника."},
+            {"q": "Как создать запись?", "a": "Откройте раздел «Записи» в меню и нажмите «Новая запись» — выберите дату, время и клиента."},
         ],
         "tips": [],
     },
@@ -124,10 +126,22 @@ KB: list[dict] = [
 ]
 
 
+# Common short function words — without these, a 3-letter word like "как"
+# can coincidentally decide the match by appearing in an unrelated FAQ.
+_STOPWORDS = {
+    "как", "что", "это", "для", "или", "чем", "тот", "эта", "эти", "она", "они",
+    "мне", "нас", "вас", "вам", "нам", "его", "нее", "мой", "моя", "моё",
+}
+
+
+def _tokenize(text: str) -> set[str]:
+    return {w for w in re.findall(r"\w+", text.lower()) if len(w) > 2 and w not in _STOPWORDS}
+
+
 def search_kb_scored(query: str, top_k: int = 1) -> list[tuple[int, dict]]:
-    """Simple keyword-overlap search — proportionate to ~9 KB entries, no
+    """Whole-word keyword-overlap search — proportionate to ~9 KB entries, no
     embeddings/vector DB needed."""
-    q_words = {w for w in query.lower().replace("?", "").replace(",", "").split() if len(w) > 2}
+    q_words = _tokenize(query)
     if not q_words:
         return []
 
@@ -137,8 +151,9 @@ def search_kb_scored(query: str, top_k: int = 1) -> list[tuple[int, dict]]:
             entry["title"], entry["description"], entry["purpose"],
             " ".join(entry.get("buttons", [])), " ".join(entry.get("actions", [])),
             " ".join(f["q"] + " " + f["a"] for f in entry.get("faq", [])),
-        ]).lower()
-        score = sum(1 for w in q_words if w in haystack)
+        ])
+        haystack_words = _tokenize(haystack)
+        score = sum(1 for w in q_words if w in haystack_words)
         if score > 0:
             scored.append((score, entry))
 
