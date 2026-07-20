@@ -138,22 +138,39 @@ def _tokenize(text: str) -> set[str]:
     return {w for w in re.findall(r"\w+", text.lower()) if len(w) > 2 and w not in _STOPWORDS}
 
 
-def search_kb_scored(query: str, top_k: int = 1) -> list[tuple[int, dict]]:
-    """Whole-word keyword-overlap search — proportionate to ~9 KB entries, no
-    embeddings/vector DB needed."""
+def _entry_haystack(entry: dict) -> str:
+    return " ".join([
+        entry["title"], entry["description"], entry["purpose"],
+        " ".join(entry.get("buttons", [])), " ".join(entry.get("actions", [])),
+        " ".join(f["q"] + " " + f["a"] for f in entry.get("faq", [])),
+    ])
+
+
+def _document_frequencies() -> dict[str, int]:
+    """How many KB entries each word appears in. Words like "бота"/"ответ"
+    show up almost everywhere ("Настройки бота", "Отчёты бота"...) and would
+    otherwise decide ties by accident — down-weight them instead of treating
+    every match as equally significant."""
+    freq: dict[str, int] = {}
+    for entry in KB:
+        for w in _tokenize(_entry_haystack(entry)):
+            freq[w] = freq.get(w, 0) + 1
+    return freq
+
+
+def search_kb_scored(query: str, top_k: int = 1) -> list[tuple[float, dict]]:
+    """IDF-weighted keyword-overlap search — proportionate to ~9 KB entries,
+    no embeddings/vector DB needed. A word shared by many entries counts for
+    much less than one that's specific to a single page."""
     q_words = _tokenize(query)
     if not q_words:
         return []
 
+    freq = _document_frequencies()
     scored = []
     for entry in KB:
-        haystack = " ".join([
-            entry["title"], entry["description"], entry["purpose"],
-            " ".join(entry.get("buttons", [])), " ".join(entry.get("actions", [])),
-            " ".join(f["q"] + " " + f["a"] for f in entry.get("faq", [])),
-        ])
-        haystack_words = _tokenize(haystack)
-        score = sum(1 for w in q_words if w in haystack_words)
+        haystack_words = _tokenize(_entry_haystack(entry))
+        score = sum(1.0 / freq.get(w, 1) for w in q_words if w in haystack_words)
         if score > 0:
             scored.append((score, entry))
 
