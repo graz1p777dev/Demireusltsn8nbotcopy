@@ -72,10 +72,24 @@ def _kb_sitemap() -> str:
     return "\n".join(f"- {e['title']} ({e['url']}): {e['description']}" for e in KB)
 
 
-def _system_prompt(user: CurrentUser, page_context: dict | None) -> str:
+def _find_kb_entry_by_url(path: str | None) -> dict | None:
+    if not path:
+        return None
+    from app.data.copilot_kb import KB
+    return next((e for e in KB if e["url"] == path), None)
+
+
+def _system_prompt(user: CurrentUser, page_context: dict | None, page_entry: dict | None) -> str:
     ctx = ""
     if page_context and page_context.get("path"):
         ctx = f"\nПользователь сейчас находится на странице: {page_context['path']}."
+        if page_entry:
+            ctx += (
+                f" Это раздел «{page_entry['title']}»: {page_entry['description']} "
+                f"Что там можно делать: {'; '.join(page_entry.get('actions', [])) or '—'}. "
+                "Если вопрос звучит как «как это сделать», «как добавить», «тут»/«здесь» без явного "
+                "указания раздела — считай, что речь именно об этой странице, а не о какой-то другой."
+            )
         if page_context.get("extra"):
             ctx += f" Доп. контекст: {json.dumps(page_context['extra'], ensure_ascii=False)}."
     return (
@@ -128,7 +142,20 @@ def handle_message(
     user_text: str,
     page_context: dict | None = None,
 ) -> dict:
-    kb_hits = search_kb_scored(user_text, top_k=1)
+    page_entry = _find_kb_entry_by_url((page_context or {}).get("path"))
+
+    kb_hits = search_kb_scored(user_text, top_k=20)
+    if page_entry:
+        # Пользователь спрашивает "как это сделать" находясь на конкретной
+        # странице — если для неё есть хоть какое-то текстовое совпадение,
+        # не даём странице с чуть большим случайным перевесом победить
+        # страницу, на которой человек реально находится.
+        for i, (score, entry) in enumerate(kb_hits):
+            if entry["key"] == page_entry["key"] and score > 0:
+                kb_hits[i] = (score + 2.0, entry)
+                break
+        kb_hits.sort(key=lambda t: t[0], reverse=True)
+
     if kb_hits and kb_hits[0][0] >= KB_MATCH_THRESHOLD:
         _, entry = kb_hits[0]
         reply = _answer_from_kb(entry)
@@ -143,7 +170,7 @@ def handle_message(
 
     client = OpenAI(api_key=settings.openai_api_key)
     messages = [
-        {"role": "system", "content": _system_prompt(user, page_context)},
+        {"role": "system", "content": _system_prompt(user, page_context, page_entry)},
         {"role": "user", "content": user_text},
     ]
 
