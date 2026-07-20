@@ -16,7 +16,7 @@ from app.services import copilot_tools
 
 _log = logging.getLogger(__name__)
 
-KB_MATCH_THRESHOLD = 2  # keyword-overlap hits needed to answer straight from the KB, no LLM round trip
+KB_MATCH_THRESHOLD = 1.2  # min IDF-weighted score to answer straight from the KB, no LLM round trip
 
 TOOL_TO_KB_KEY = {
     "get_dialogues_summary": "dialogues",
