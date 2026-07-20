@@ -39,6 +39,23 @@ def _kb_button(key: str) -> dict | None:
     return {"label": f"Открыть «{entry['title']}»", "href": entry["url"]}
 
 
+def _kb_buttons_mentioned_in(text: str) -> list[dict]:
+    """The system prompt tells the model to name the exact section title —
+    ground the button in what it actually said, not a pre-guessed KB match.
+    A pre-guessed match can rank top by keyword overlap while the model
+    (using semantic understanding the keyword search doesn't have) correctly
+    talks about a different section — attaching the guessed button then
+    contradicts the reply text."""
+    from app.data.copilot_kb import KB
+    buttons = []
+    for entry in KB:
+        if entry["title"] in text or entry["url"] in text:
+            btn = _kb_button(entry["key"])
+            if btn and btn not in buttons:
+                buttons.append(btn)
+    return buttons
+
+
 def _answer_from_kb(entry: dict) -> str:
     lines = [entry["description"]]
     if entry.get("actions"):
@@ -130,14 +147,6 @@ def handle_message(
     ]
 
     buttons: list[dict] = []
-    # Вопрос не дотянул до порога точного совпадения (см. KB_MATCH_THRESHOLD),
-    # но раздел всё равно может быть релевантным — кнопка не должна зависеть
-    # от того, вызовет ли модель инструмент или просто ответит текстом.
-    if kb_hits and kb_hits[0][0] > 0:
-        btn = _kb_button(kb_hits[0][1]["key"])
-        if btn:
-            buttons.append(btn)
-
     pending_payload: dict | None = None
     pending_tool_name: str | None = None
 
@@ -188,6 +197,13 @@ def handle_message(
             "reply": "ИИ-помощник временно недоступен — не удалось связаться с провайдером ИИ. Попробуйте ещё раз чуть позже.",
             "buttons": [], "quick_actions": [], "pending_action": None,
         }
+
+    # Кнопка должна соответствовать тому, что модель реально написала —
+    # не угадыванию по ключевым словам, которое может указывать на другой
+    # раздел, чем тот, о котором она рассказала в ответе.
+    for btn in _kb_buttons_mentioned_in(reply):
+        if btn not in buttons:
+            buttons.append(btn)
 
     pending_action = None
     if pending_payload is not None:
