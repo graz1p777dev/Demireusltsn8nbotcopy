@@ -464,13 +464,13 @@ _TEST_COST_MAP = {
 }
 
 _GEMINI_MODELS = {"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"}
-# Catalog display name -> actual DeepSeek API model id. "deepseek-chat" is the id already
-# verified working in this project (classify_sales_intent's hypervisor call); V4 Pro has no
-# confirmed separate id yet, so it's routed to the same chat model until DeepSeek exposes one.
+# Catalog display name -> actual DeepSeek API model id. DeepSeek retired "deepseek-chat" and
+# "deepseek-reasoner" (both now 400 invalid_request_error) in favor of "deepseek-v4-pro" /
+# "deepseek-v4-flash" -- those are the only two ids the API currently accepts (2026-07-26).
 _DEEPSEEK_API_MODEL = {
-    "deepseek-v3.2": "deepseek-chat",
-    "deepseek-v4-pro": "deepseek-chat",
-    "deepseek-reasoner": "deepseek-reasoner",
+    "deepseek-v3.2": "deepseek-v4-flash",
+    "deepseek-v4-pro": "deepseek-v4-pro",
+    "deepseek-reasoner": "deepseek-v4-pro",
 }
 
 

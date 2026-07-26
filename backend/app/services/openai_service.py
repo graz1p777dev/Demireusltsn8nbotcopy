@@ -588,7 +588,7 @@ def _normalize_intent(fallback: dict, raw: str | None) -> dict:
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def classify_sales_intent(dialogue: list[dict], latest_message: str) -> AIResult:
     fallback = {"is_sales": True, "is_complex": True, "is_purchase": False, "reason": "no_key"}
-    model = "deepseek-chat"
+    model = "deepseek-v4-flash"
 
     image_urls = _extract_image_urls([{"role": "user", "content": latest_message}])
     if image_urls and settings.openai_api_key:
