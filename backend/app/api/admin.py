@@ -403,6 +403,32 @@ def update_bot_memory(body: BotMemoryUpdate, db: Session = Depends(get_db)) -> d
     return {"ok": True}
 
 
+BOT_MODES = {"manual", "aggressive", "autonomous"}
+
+
+class BotModeUpdate(BaseModel):
+    mode: str
+
+
+@router.get("/bot-mode")
+def get_bot_mode(db: Session = Depends(get_db)) -> dict:
+    row = db.scalar(select(Setting).where(Setting.key == "bot_mode"))
+    return {"mode": row.value if row and row.value else "manual"}
+
+
+@router.patch("/bot-mode")
+def update_bot_mode(body: BotModeUpdate, db: Session = Depends(get_db)) -> dict:
+    if body.mode not in BOT_MODES:
+        raise HTTPException(400, f"mode must be one of {sorted(BOT_MODES)}")
+    row = db.scalar(select(Setting).where(Setting.key == "bot_mode"))
+    if row:
+        row.value = body.mode
+    else:
+        db.add(Setting(key="bot_mode", value=body.mode, is_secret=False))
+    db.commit()
+    return {"ok": True}
+
+
 class AiTestRequest(BaseModel):
     message: str
     history: list[dict] = []  # [{"role": "user"|"assistant", "content": "..."}]
@@ -905,6 +931,53 @@ def lab_mistake_analysis(limit: int = 100, db: Session = Depends(get_db)) -> dic
         "suggested_prompt_changes": data.get("suggested_prompt_changes", ""),
         "expected_improvement": data.get("expected_improvement", ""),
     }
+
+
+@router.post("/lab/calibrate-from-history")
+def lab_calibrate_from_history(db: Session = Depends(get_db)) -> dict:
+    """One-time calibration: analyze historically accepted replies (Mar-Jun) for prompt tuning.
+
+    Does NOT touch the live bot_system_prompt — the result is only stored as a
+    draft (Setting key bot_system_prompt_draft) for the owner to review. Applying
+    it goes through the existing /admin/bot-prompt PATCH the owner already uses.
+    """
+    from app.services.openai_service import analyze_manager_corrections
+
+    rows = db.scalars(
+        select(TrainingExample).where(
+            TrainingExample.quality_label == "accepted",
+            TrainingExample.created_at >= datetime(2026, 3, 1, tzinfo=ZoneInfo("UTC")),
+            TrainingExample.created_at <= datetime(2026, 6, 30, 23, 59, 59, tzinfo=ZoneInfo("UTC")),
+        )
+    ).all()
+    if not rows:
+        return {
+            "total_examples": 0,
+            "categories": [], "suggested_prompt_changes": "", "expected_improvement": "",
+        }
+    examples = [
+        {
+            "client_message": r.client_message[:500],
+            "ai_reply": r.ai_reply[:500],
+            "final_reply": r.final_reply[:500],
+        }
+        for r in rows
+    ]
+    result = analyze_manager_corrections(examples)
+    data = result.content if isinstance(result.content, dict) else {}
+    draft = {
+        "categories": data.get("categories", []),
+        "suggested_prompt_changes": data.get("suggested_prompt_changes", ""),
+        "expected_improvement": data.get("expected_improvement", ""),
+    }
+    draft_row = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt_draft"))
+    draft_value = _json.dumps(draft, ensure_ascii=False)
+    if draft_row:
+        draft_row.value = draft_value
+    else:
+        db.add(Setting(key="bot_system_prompt_draft", value=draft_value, is_secret=False))
+    db.commit()
+    return {"total_examples": len(rows), **draft}
 
 
 @router.get("/analytics")

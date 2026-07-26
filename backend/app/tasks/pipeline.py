@@ -507,6 +507,12 @@ def process_lead_buffer(lead_pk: int, triggering_message_id: str) -> None:
             response={"fields": extracted, "usage": extracted_result.model_dump(exclude={"content"})},
         )
 
+        # TODO(bot_mode=autonomous): when the "autonomous" bot mode is fully specified,
+        # this is where a real implementation would skip the Telegram approval card
+        # entirely and auto-send `reply` straight to the client. Deliberately NOT
+        # implemented yet — doing so without an explicit go-ahead risks silently
+        # auto-messaging real customers with no human in the loop. For now
+        # "autonomous" is only a storable bot_mode value (see /admin/bot-mode).
         if settings.human_approval_enabled:
             _mark_buffers_processed(db, buffers)
             stage = _lead_stage_snapshot(db, lead)
@@ -755,6 +761,15 @@ def pop_purchase_edit_session(db, manager_id: str) -> int | None:
     return int(value) if value else None
 
 
+def set_reject_reason_session(db, manager_id: str, approval_id: int) -> None:
+    _set_session(db, f"telegram_reject_reason_session:{manager_id}", str(approval_id))
+
+
+def pop_reject_reason_session(db, manager_id: str) -> int | None:
+    value = _pop_session(db, f"telegram_reject_reason_session:{manager_id}")
+    return int(value) if value else None
+
+
 def set_translate_session(db, manager_id: str, approval_id: int) -> None:
     _set_session(db, f"telegram_translate_session:{manager_id}", str(approval_id))
 
@@ -919,12 +934,13 @@ def save_training_example(db, approval: ApprovalRequest) -> None:
     )
 
 
-def reject_request(db, approval_id: int, manager_id: str) -> bool:
+def reject_request(db, approval_id: int, manager_id: str, reason: str) -> bool:
     approval = db.get(ApprovalRequest, approval_id)
     if not approval:
         return False
     approval.status = "rejected"
     approval.manager_telegram_id = manager_id
+    approval.reject_reason = reason
     db.commit()
     clear_claim(db, approval_id)
     db.commit()
@@ -932,8 +948,96 @@ def reject_request(db, approval_id: int, manager_id: str) -> bool:
     if lead:
         move_lead_status(db, lead, settings.amocrm_status_on_reject, "approval_rejected")
         _update_card_or_notify(approval, lead, "❌ Отклонено", _load_manager_name(db, manager_id))
-    log_action(db, approval.lead_id, "telegram.approval_rejected", "success", {"approval_id": approval_id})
+    save_rejected_training_example(db, approval, reason)
+    log_action(db, approval.lead_id, "telegram.approval_rejected", "success", {"approval_id": approval_id, "reject_reason": reason})
+    _maybe_calibrate_prompt(db, approval, reason)
     return True
+
+
+def save_rejected_training_example(db, approval: ApprovalRequest, reason: str) -> None:
+    existing = db.scalar(
+        select(TrainingExample).where(TrainingExample.approval_request_id == approval.id)
+    )
+    if existing:
+        return
+    db.add(
+        TrainingExample(
+            approval_request_id=approval.id,
+            lead_id=approval.lead_id,
+            client_message=approval.client_message,
+            ai_reply=approval.ai_reply,
+            # final_reply is the reason, not a corrected reply — nothing was sent to
+            # the client, so there is no "final" text; the reason is what carries
+            # the learning signal here, and extracted_fields keeps a structured copy.
+            final_reply=reason,
+            was_edited=False,
+            manager_telegram_id=approval.manager_telegram_id,
+            amocrm_stage_name=approval.amocrm_stage_name,
+            extracted_fields={**(approval.extracted_fields or {}), "reject_reason": reason},
+            quality_label="rejected",
+        )
+    )
+    db.commit()
+    log_action(
+        db,
+        approval.lead_id,
+        "training.example_saved",
+        "success",
+        {"approval_id": approval.id, "quality_label": "rejected", "reject_reason": reason},
+    )
+
+
+def _maybe_calibrate_prompt(db, approval: ApprovalRequest, reason: str) -> None:
+    """Aggressive mode only: auto-patch the live system prompt after this single reject.
+
+    Deliberately conservative — this runs unattended after every reject, so a
+    calibration failure must never break the reject flow, and the patch itself
+    must stay small (see calibrate_prompt_from_single_reject's own prompt).
+    """
+    mode = db.scalar(select(Setting).where(Setting.key == "bot_mode"))
+    if not mode or mode.value != "aggressive":
+        return
+    try:
+        from app.services.openai_service import calibrate_prompt_from_single_reject
+        from app.services.prompts import SALES_AGENT_SYSTEM_PROMPT
+
+        prompt_row = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt"))
+        current_prompt = prompt_row.value if prompt_row else SALES_AGENT_SYSTEM_PROMPT
+        result = calibrate_prompt_from_single_reject(
+            approval.client_message, approval.ai_reply, reason, current_prompt
+        )
+        data = result.content if isinstance(result.content, dict) else {}
+        patch = (data.get("prompt_patch") or "").strip()
+        reasoning = data.get("reasoning") or ""
+        save_ai_usage(db, approval.lead_id, result)
+        if not patch:
+            return
+        new_prompt = f"{current_prompt}\n\n{patch}"
+        if prompt_row:
+            prompt_row.value = new_prompt
+        else:
+            db.add(Setting(key="bot_system_prompt", value=new_prompt, is_secret=False))
+
+        history_row = db.scalar(select(Setting).where(Setting.key == "bot_system_prompt_history"))
+        history = json.loads(history_row.value) if history_row and history_row.value else []
+        history.append({
+            "at": datetime.now(ZoneInfo(settings.timezone)).isoformat(),
+            "approval_id": approval.id,
+            "patch": patch,
+            "reasoning": reasoning,
+        })
+        history = history[-200:]
+        if history_row:
+            history_row.value = json.dumps(history, ensure_ascii=False)
+        else:
+            db.add(Setting(key="bot_system_prompt_history", value=json.dumps(history, ensure_ascii=False), is_secret=False))
+        db.commit()
+        log_action(
+            db, approval.lead_id, "pipeline.prompt_auto_calibrated", "success",
+            {"approval_id": approval.id, "patch": patch, "reasoning": reasoning},
+        )
+    except Exception as exc:
+        _log.warning("prompt auto-calibration failed for approval_id=%s: %s", approval.id, exc)
 
 
 def save_request(db, approval_id: int, manager_id: str) -> bool:

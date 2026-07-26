@@ -25,6 +25,7 @@ from app.tasks.pipeline import (
     pop_note_session,
     pop_purchase_answer_session,
     pop_purchase_edit_session,
+    pop_reject_reason_session,
     pop_translate_session,
     process_lead_buffer,
     reject_request,
@@ -36,6 +37,7 @@ from app.tasks.pipeline import (
     set_note_session,
     set_purchase_answer_session,
     set_purchase_edit_session,
+    set_reject_reason_session,
     set_translate_session,
 )
 
@@ -223,6 +225,38 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
                 telegram.answer_callback(callback_id, "Ошибка при смене этапа")
             return {"ok": True, "action": action}
 
+        # reject_reason carries two IDs: "approval_id:reason_key" — parsed here,
+        # before the shared int(raw_id) below, same reason set_stage is handled early.
+        if action == "reject_reason":
+            parts = raw_id.split(":", 1)
+            if len(parts) != 2:
+                telegram.answer_callback(callback_id, "Ошибка")
+                return {"ok": False, "error": "invalid_callback"}
+            reason_approval_id = int(parts[0])
+            reason_key = parts[1]
+            if reason_key == "other":
+                set_reject_reason_session(db, manager_id, reason_approval_id)
+                telegram.answer_callback(callback_id)
+                prompt_text = f"❌ Причина отказа №{reason_approval_id:07d}\n\nНапишите, что не так с ответом."
+                resp3: dict = {}
+                try:
+                    resp3 = telegram.send_text(manager_id, prompt_text)
+                except Exception:
+                    pass
+                if not resp3.get("result"):
+                    try:
+                        resp3 = telegram.send_text(callback_chat_id, prompt_text)
+                    except Exception:
+                        pass
+                mid = resp3.get("result", {}).get("message_id")
+                if mid:
+                    set_edit_prompt_msg(db, manager_id, mid)
+                return {"ok": True, "action": action}
+            reason = telegram.REJECT_REASON_PRESETS.get(reason_key, reason_key)
+            ok = reject_request(db, reason_approval_id, manager_id, reason)
+            telegram.answer_callback(callback_id, "Отклонено")
+            return {"ok": ok, "action": action}
+
         # "waiting:list" не несёт approval_id — обрабатываем до int(raw_id) ниже.
         if action == "waiting":
             from app.tasks.reminders import collect_waiting_clients
@@ -273,9 +307,11 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
             telegram.answer_callback(callback_id, "Отправлено" if ok else "Не удалось отправить")
             return {"ok": ok, "action": action}
         if action == "reject":
-            ok = reject_request(db, approval_id, manager_id)
-            telegram.answer_callback(callback_id, "Отклонено")
-            return {"ok": ok, "action": action}
+            # Every reject now needs a reason — it's the only signal reject_request()
+            # has to save a TrainingExample / feed aggressive-mode auto-calibration.
+            telegram.answer_callback(callback_id)
+            telegram.send_reject_reason_menu(callback_chat_id or manager_id, approval_id)
+            return {"ok": True, "action": action}
         if action == "save":
             ok = save_request(db, approval_id, manager_id)
             telegram.answer_callback(callback_id, "Сохранено в /no-sorted")
@@ -581,6 +617,16 @@ async def telegram_webhook(secret: str, request: Request, db: Session = Depends(
                 )
             telegram.send_text(manager_id, "\n\n".join(lines))
             return {"ok": True, "action": "no_sorted"}
+        # Причина отказа («Другое»)
+        reject_reason_approval_id = pop_reject_reason_session(db, manager_id)
+        if reject_reason_approval_id and text:
+            prompt_mid = pop_edit_prompt_msg(db, manager_id)
+            if prompt_mid:
+                telegram.delete_message(manager_id, prompt_mid)
+            ok = reject_request(db, reject_reason_approval_id, manager_id, text.strip())
+            telegram.send_text(manager_id, "Отклонено")
+            return {"ok": ok, "action": "reject_reason_freetext"}
+
         # Ручное редактирование
         edit_approval_id = pop_edit_session(db, manager_id)
         if edit_approval_id and text:

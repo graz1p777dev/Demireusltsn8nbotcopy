@@ -875,6 +875,65 @@ def analyze_manager_corrections(examples: list[dict]) -> AIResult:
     )
 
 
+def calibrate_prompt_from_single_reject(
+    client_message: str, ai_reply: str, reason: str, current_prompt: str
+) -> AIResult:
+    """Propose one small, surgical system-prompt patch after a single manager reject.
+
+    Used by "aggressive" bot mode, which calls this after EVERY reject and appends
+    the result to the live prompt unattended — so the instruction below explicitly
+    asks for a minimal, targeted addition rather than a rewrite, to avoid the
+    prompt ballooning or drifting after a string of disagreements.
+    """
+    if not settings.openai_api_key:
+        return AIResult(content={"prompt_patch": "", "reasoning": ""},
+                         model=settings.openai_model_sales, purpose="reject_calibration")
+    started = perf_counter()
+    system = (
+        "Ты — аналитик качества AI-бота продаж. Менеджер только что отклонил один черновик ответа бота "
+        "клиенту и указал причину отказа. Тебе дают: сообщение клиента (client_message), черновик бота "
+        "(ai_reply), причину отказа менеджера (reason) и текущий системный промпт бота (current_prompt). "
+        "Предложи МАЛЕНЬКОЕ точечное дополнение или правку формулировки в промпте, которое предотвратит "
+        "именно эту конкретную ошибку в будущем. Это НЕ полная переработка промпта — только небольшая "
+        "точечная правка, максимум 1-2 предложения, добавляемая к промпту. Если причина слишком расплывчата "
+        "или специфична только для этого случая, чтобы сформулировать общее правило, верни пустую строку. "
+        "Ответь строго JSON вида: "
+        '{"prompt_patch": "текст для добавления в промпт бота, или пустая строка", '
+        '"reasoning": "краткое объяснение почему это должно помочь"}'
+    )
+    user = json.dumps(
+        {
+            "client_message": client_message,
+            "ai_reply": ai_reply,
+            "reason": reason,
+            "current_prompt": current_prompt,
+        },
+        ensure_ascii=False,
+    )
+    response = _create_completion(
+        model=settings.openai_model_sales,
+        temperature=0.2,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    )
+    latency_ms = int((perf_counter() - started) * 1000)
+    data = json.loads(response.choices[0].message.content or "{}")
+    data.setdefault("prompt_patch", "")
+    data.setdefault("reasoning", "")
+    return _result(
+        content=data,
+        model=settings.openai_model_sales,
+        purpose="reject_calibration",
+        usage=_usage_payload(response),
+        latency_ms=latency_ms,
+        input_cost_per_1m=settings.openai_input_cost_sales,
+        output_cost_per_1m=settings.openai_output_cost_sales,
+    )
+
+
 def generate_purchase_template(dialogue: list[dict], client_message: str) -> tuple[str, AIResult | None]:
     """Draft a short reply lead-in for a 'wants to buy' card.
 

@@ -493,6 +493,40 @@ def send_templates_menu(chat_id: str | int, templates: list[dict], approval_id: 
         return resp.json()
 
 
+# Preset reject reasons shown as buttons; "other" opens a free-text follow-up.
+# Keys are stable identifiers used in callback_data — the Russian labels are what
+# the manager sees and what reject_request()/TrainingExample end up storing.
+REJECT_REASON_PRESETS = {
+    "tone": "Тон не тот",
+    "fact_error": "Фактическая ошибка",
+    "pushy": "Слишком навязчиво",
+    "other": "Другое",
+}
+
+
+def send_reject_reason_menu(chat_id: str | int, approval_id: int) -> dict:
+    if not settings.telegram_bot_token:
+        return {"skipped": True}
+    rows = []
+    for i in range(0, len(REJECT_REASON_PRESETS), 2):
+        row = []
+        for key, label in list(REJECT_REASON_PRESETS.items())[i:i + 2]:
+            row.append({"text": label, "callback_data": f"reject_reason:{approval_id}:{key}"})
+        rows.append(row)
+    with httpx.Client(timeout=20) as client:
+        resp = client.post(
+            _api_url("sendMessage"),
+            json={
+                "chat_id": chat_id,
+                "text": "❌ <b>Почему отклоняете ответ?</b>",
+                "parse_mode": "HTML",
+                "reply_markup": {"inline_keyboard": rows},
+            },
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
 def stages_keyboard(stages: list[dict], approval_id: int) -> dict:
     rows = []
     for stage in stages:

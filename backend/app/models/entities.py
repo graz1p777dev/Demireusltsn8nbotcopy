@@ -187,6 +187,7 @@ class ApprovalRequest(Base):
     client_message_translation: Mapped[str | None] = mapped_column(Text)
     ai_reply_translation: Mapped[str | None] = mapped_column(Text)
     ai_reasoning: Mapped[str | None] = mapped_column(Text)
+    reject_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
