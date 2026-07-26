@@ -28,7 +28,7 @@ export function InventoryTopbar({ userName, role }: { userName: string; role: st
         <Button variant="outline" size="sm" render={<a href="/dashboard" />}>
           {t("crm")}
         </Button>
-        <Button variant="outline" size="sm" className="gap-1.5" render={<a href="/cashier" />}>
+        <Button variant="outline" size="sm" className="gap-1.5" render={<a href="/cashier" target="_blank" rel="noopener noreferrer" />}>
           <Monitor className="size-3.5 text-primary" />
           {t("cashier")}
         </Button>

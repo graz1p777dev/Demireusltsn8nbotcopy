@@ -1,3 +1,4 @@
+import type { Metadata, Viewport } from "next"
 import { InventorySidebar } from "@/components/inventory/sidebar"
 import { InventoryTopbar } from "@/components/inventory/topbar"
 import { DocumentCreationProvider } from "@/components/inventory/documents/document-creation-provider"
@@ -5,6 +6,16 @@ import { getDocumentFormData } from "@/app/inventory/stock-movement/actions"
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import { InventoryLanguageProvider } from "@/components/inventory/language-provider"
+import { PwaRegister } from "@/components/pwa/pwa-register"
+import { PWA_THEME_COLOR } from "@/config/pwa"
+
+export const metadata: Metadata = {
+  manifest: "/inventory/manifest.webmanifest",
+}
+
+export const viewport: Viewport = {
+  themeColor: PWA_THEME_COLOR,
+}
 
 export default async function InventoryLayout({
   children,
@@ -25,6 +36,7 @@ export default async function InventoryLayout({
   return (
     <InventoryLanguageProvider>
     <DocumentCreationProvider formData={documentFormData}>
+      <PwaRegister swUrl="/inventory/sw.js" scope="/inventory" />
       <div className="flex min-h-screen">
         <InventorySidebar />
         <div className="flex min-w-0 flex-1 flex-col">
