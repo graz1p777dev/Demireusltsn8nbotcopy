@@ -3,12 +3,16 @@
 import { useEffect, useMemo, useState, useTransition, type FormEvent } from 'react'
 import {
   ArrowRight,
+  BrainCircuit,
   Check,
   ChevronDown,
+  LoaderCircle,
   Minus,
   PackageCheck,
   Plus,
   Search,
+  Send,
+  ShieldCheck,
   ShoppingBag,
   Sparkles,
   Trash2,
@@ -29,8 +33,24 @@ const FILTERS: { key: FilterKey; label: string; pattern?: RegExp }[] = [
   { key: 'mask', label: 'Маски', pattern: /mask|pad|patch/i },
 ]
 
-const PACK_COLORS = ['#d9d4ff', '#cfe9ee', '#f6d9e4', '#dde6c5', '#e8ddcf', '#d6e0f1']
+const PACK_COLORS = ['#dce8f0', '#cfe0ea', '#e5edf2', '#d7e4e8', '#e9eef1', '#d4e0eb']
 const CART_STORAGE_KEY = 'demi-results-shop-cart'
+const ADVISOR_PROMPTS = [
+  'Сухость и стянутость кожи',
+  'Акне и воспаления',
+  'Пигментация и неровный тон',
+  'Нужна защита SPF',
+]
+
+interface AdvisorResult {
+  intro: string
+  caution: string
+  recommendations: {
+    productId: string
+    reason: string
+    routine: string
+  }[]
+}
 
 function formatPrice(value: number) {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value) + ' сом'
@@ -54,7 +74,8 @@ function ProductVisual({ product, index }: { product: ShopProduct; index: number
 
   return (
     <div className={styles.productFallback} style={{ backgroundColor: PACK_COLORS[index % PACK_COLORS.length] }}>
-      <span className={styles.fallbackBrand}>DEMI</span>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img className={styles.fallbackLogo} src="/inventory-static/demi-results-logo.svg" alt="" />
       <span className={styles.fallbackLetter}>{productLabel(product.name)}</span>
       <span className={styles.fallbackSku}>{product.sku}</span>
     </div>
@@ -76,6 +97,10 @@ export default function ShopClient({ products, displayFontClass }: Props) {
   const [checkout, setCheckout] = useState({ name: '', phone: '', address: '', comment: '' })
   const [orderError, setOrderError] = useState('')
   const [orderNumber, setOrderNumber] = useState<number | null>(null)
+  const [advisorProblem, setAdvisorProblem] = useState('')
+  const [advisorResult, setAdvisorResult] = useState<AdvisorResult | null>(null)
+  const [advisorError, setAdvisorError] = useState('')
+  const [advisorLoading, setAdvisorLoading] = useState(false)
   const [isPending, startTransition] = useTransition()
 
   useEffect(() => {
@@ -120,6 +145,10 @@ export default function ShopClient({ products, displayFontClass }: Props) {
     0
   )
   const inStockCount = products.filter((product) => product.stock > 0).length
+  const advisorProducts = (advisorResult?.recommendations ?? []).flatMap((recommendation) => {
+    const product = products.find((item) => item.id === recommendation.productId)
+    return product ? [{ product, recommendation }] : []
+  })
 
   const setQuantity = (product: ShopProduct, quantity: number) => {
     const safeQuantity = Math.min(Math.floor(product.stock), Math.max(0, quantity))
@@ -161,12 +190,41 @@ export default function ShopClient({ products, displayFontClass }: Props) {
     })
   }
 
+  const askAdvisor = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setAdvisorError('')
+    setAdvisorResult(null)
+
+    const problem = advisorProblem.trim()
+    if (problem.length < 5) {
+      setAdvisorError('Опишите задачу немного подробнее — минимум 5 символов.')
+      return
+    }
+
+    setAdvisorLoading(true)
+    try {
+      const response = await fetch('/api/shop-advisor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ problem }),
+      })
+      const data = await response.json() as AdvisorResult & { error?: string }
+      if (!response.ok) throw new Error(data.error || 'Не удалось получить рекомендацию')
+      setAdvisorResult(data)
+    } catch (error) {
+      setAdvisorError(error instanceof Error ? error.message : 'Не удалось получить рекомендацию')
+    } finally {
+      setAdvisorLoading(false)
+    }
+  }
+
   return (
     <main className={`${styles.shop} ${displayFontClass}`}>
       <header className={styles.header}>
         <a className={styles.logo} href="/shop" aria-label="Demi Results — главная магазина">
-          <span className={styles.logoMark}>DR</span>
-          <span>DEMI RESULTS<small>beauty shop</small></span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img className={styles.logoImage} src="/inventory-static/demi-results-logo.svg" alt="" />
+          <span>DEMI RESULTS<small>beauty boutique</small></span>
         </a>
 
         <label className={styles.headerSearch}>
@@ -217,6 +275,72 @@ export default function ShopClient({ products, displayFontClass }: Props) {
         <span><Check size={17} /> Актуальные остатки</span>
         <span><PackageCheck size={17} /> Оригинальная косметика</span>
         <span><Sparkles size={17} /> Поможем подобрать уход</span>
+      </section>
+
+      <section className={styles.advisor} id="ai-advisor">
+        <div className={styles.advisorIntro}>
+          <span className={styles.advisorKicker}><BrainCircuit size={16} /> AI-консьерж Demi Results</span>
+          <h2>Расскажите, что беспокоит вашу кожу.</h2>
+          <p>Консьерж изучит актуальный каталог и предложит до трёх средств, которые прямо сейчас есть в наличии.</p>
+          <div className={styles.advisorTrust}>
+            <ShieldCheck size={18} />
+            <span>Советы основаны только на реальной базе магазина. Это не медицинская консультация.</span>
+          </div>
+        </div>
+
+        <div className={styles.advisorConsole}>
+          <div className={styles.advisorConsoleHead}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/inventory-static/demi-results-logo.svg" alt="" />
+            <div><strong>Персональный подбор</strong><span><i /> AI онлайн</span></div>
+          </div>
+          <form onSubmit={askAdvisor}>
+            <label htmlFor="advisor-problem">Опишите проблему, тип кожи и желаемый результат</label>
+            <textarea
+              id="advisor-problem"
+              value={advisorProblem}
+              onChange={(event) => setAdvisorProblem(event.target.value)}
+              minLength={5}
+              maxLength={500}
+              rows={4}
+              placeholder="Например: кожа сухая и чувствительная, после умывания стягивает. Ищу мягкий базовый уход без тяжёлой текстуры."
+            />
+            <div className={styles.advisorSuggestions}>
+              {ADVISOR_PROMPTS.map((prompt) => (
+                <button type="button" key={prompt} onClick={() => setAdvisorProblem(prompt)}>{prompt}</button>
+              ))}
+            </div>
+            {advisorError && <div className={styles.advisorError}>{advisorError}</div>}
+            <button className={styles.advisorSubmit} type="submit" disabled={advisorLoading}>
+              {advisorLoading ? <><LoaderCircle className={styles.spinner} size={18} /> Анализирую каталог…</> : <>Подобрать уход <Send size={17} /></>}
+            </button>
+          </form>
+        </div>
+
+        {advisorResult && (
+          <div className={styles.advisorAnswer} aria-live="polite">
+            <div className={styles.advisorAnswerHead}>
+              <span><Sparkles size={16} /> Рекомендация</span>
+              <p>{advisorResult.intro}</p>
+            </div>
+            <div className={styles.advisorProducts}>
+              {advisorProducts.map(({ product, recommendation }, index) => (
+                <article className={styles.advisorProduct} key={product.id}>
+                  <div className={styles.advisorProductVisual}><ProductVisual product={product} index={index} /></div>
+                  <div className={styles.advisorProductBody}>
+                    <span>Выбор {index + 1}</span>
+                    <h3>{product.name}</h3>
+                    <strong>{formatPrice(salePrice(product))}</strong>
+                    <p>{recommendation.reason}</p>
+                    {recommendation.routine && <small><b>В уходе:</b> {recommendation.routine}</small>}
+                    <button type="button" onClick={() => addToCart(product)}>Добавить в корзину <Plus size={15} /></button>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {advisorResult.caution && <div className={styles.advisorCaution}><ShieldCheck size={16} /> {advisorResult.caution}</div>}
+          </div>
+        )}
       </section>
 
       <section className={styles.catalog} id="catalog">
@@ -302,7 +426,8 @@ export default function ShopClient({ products, displayFontClass }: Props) {
       </section>
 
       <footer className={styles.footer}>
-        <div className={styles.logoMark}>DR</div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className={styles.logoImage} src="/inventory-static/demi-results-logo.svg" alt="" />
         <div><strong>Demi Results</strong><span>Красота начинается с понятного ухода.</span></div>
         <a href="#catalog">Вернуться к каталогу ↑</a>
       </footer>

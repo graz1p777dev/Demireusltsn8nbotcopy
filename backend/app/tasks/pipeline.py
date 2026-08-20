@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -26,6 +27,7 @@ from app.models.entities import (
 )
 from app.services import amocrm, crm_notify, google_sheets, telegram
 from app.services.openai_service import AIResult, ai_edit_reply, classify_sales_intent, detect_and_translate, detect_language, extract_fields, generate_purchase_template, generate_reply, strip_voice_marker, summarize_dialogue, verify_reply
+from app.services.outgoing import message_delay_seconds, split_outgoing_messages
 from app.services.slots import check_consultation_slots
 from app.tasks.celery_app import celery_app
 
@@ -573,6 +575,8 @@ def send_approved_reply(
     extracted: dict | None,
     approval: ApprovalRequest | None = None,
 ) -> bool:
+    reply_parts = split_outgoing_messages(reply)
+    stored_reply = "\n\n".join(reply_parts)
     assistant_message = db.scalar(
         select(Message).where(
             Message.lead_id == lead.id,
@@ -580,7 +584,7 @@ def send_approved_reply(
         )
     )
     if assistant_message:
-        assistant_message.text = reply
+        assistant_message.text = stored_reply
         assistant_message.status = "approved"
     else:
         assistant_message = Message(
@@ -589,7 +593,7 @@ def send_approved_reply(
             message_id=f"ai:{triggering_message_id}",
             role="assistant",
             direction="outgoing",
-            text=reply,
+            text=stored_reply,
             status="approved",
         )
         db.add(assistant_message)
@@ -601,7 +605,13 @@ def send_approved_reply(
         assistant_message.status = "sent"
         if approval:
             approval.status = "sent"
-        log_action(db, lead.id, "amocrm.send_message", "dry_run", {"text": reply})
+        log_action(
+            db,
+            lead.id,
+            "amocrm.send_message",
+            "dry_run",
+            {"text": stored_reply, "parts": len(reply_parts)},
+        )
         db.commit()
         if extracted:
             update_integrations_after_approval(db, lead, extracted)
@@ -609,22 +619,42 @@ def send_approved_reply(
 
     try:
         session = amocrm.create_chat_session()
-        response = amocrm.send_chat_message(
-            session,
-            lead.chat_id or "",
-            lead.amocrm_lead_id,
-            lead.contact_id,
-            reply,
-        )
+        responses = []
+        for index, part in enumerate(reply_parts):
+            if index:
+                time.sleep(message_delay_seconds(part))
+            responses.append(
+                amocrm.send_chat_message(
+                    session,
+                    lead.chat_id or "",
+                    lead.amocrm_lead_id,
+                    lead.contact_id,
+                    part,
+                )
+            )
         assistant_message.status = "sent"
         if approval:
             approval.status = "sent"
-        log_action(db, lead.id, "amocrm.send_message", "success", {"text": reply}, response)
+        log_action(
+            db,
+            lead.id,
+            "amocrm.send_message",
+            "success",
+            {"text": stored_reply, "parts": len(reply_parts)},
+            {"responses": responses},
+        )
     except Exception as exc:
         assistant_message.status = "send_failed"
         if approval:
             approval.status = "failed"
-        log_action(db, lead.id, "amocrm.send_message", "error", {"text": reply}, error=exc)
+        log_action(
+            db,
+            lead.id,
+            "amocrm.send_message",
+            "error",
+            {"text": stored_reply, "parts": len(reply_parts)},
+            error=exc,
+        )
         db.commit()
         return False
     db.commit()
